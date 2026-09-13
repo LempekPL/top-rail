@@ -1,6 +1,6 @@
 use crate::camera;
 use crate::railway::manager::{RailwayMode, RailwaySettings};
-use crate::util::{draw_bezier, eval_bezier, eval_derivative};
+use crate::util::*;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -9,7 +9,7 @@ pub struct TrackPlugin;
 
 const SNAP_RADIUS: f32 = 10.0;
 const LINE_SEGMENT_LENGTH: f32 = 100.0;
-const MIN_RADIUS: f32 = 50.0;
+const MIN_RADIUS: f32 = 100.0;
 
 impl Plugin for TrackPlugin {
     fn build(&self, app: &mut App) {
@@ -123,14 +123,12 @@ fn build_track(
                 break;
             }
         }
-
         let chord = p3 - p0;
         let dist = chord.length();
         let chord_dir = chord.normalize_or_zero();
 
+        let mut straight_line_dir = None;
         let mut split_segments = Vec::new();
-        let mut out_tangent_p3 = chord_dir;
-
         let mut actual_t0 = builder.start_tangent;
         // if let Some(t0) = actual_t0 {
         //     if t0.dot(chord_dir) < 0.0 {
@@ -138,95 +136,27 @@ fn build_track(
         //     }
         // }
 
-        let mut is_curve = false;
-        let mut straight_line_dir = chord_dir;
-
         if let Some(t3_out) = snapped_end_tangent {
-            is_curve = true;
             let t0 = actual_t0.unwrap_or(chord_dir);
-            let t3_in = -t3_out;
-            let control_dist = dist * 0.45;
-            let p1 = p0 + t0 * control_dist;
-            let p2 = p3 - t3_in * control_dist;
-            out_tangent_p3 = t3_out;
-            let num_splits = (dist / LINE_SEGMENT_LENGTH).ceil().max(1.0) as usize;
-            let step = 1.0 / num_splits as f32;
-            for i in 0..num_splits {
-                let ta = i as f32 * step;
-                let tb = (i + 1) as f32 * step;
-
-                let q0 = eval_bezier(p0, p1, p2, p3, ta);
-                let q3 = eval_bezier(p0, p1, p2, p3, tb);
-
-                let d_a = eval_derivative(p0, p1, p2, p3, ta);
-                let d_b = eval_derivative(p0, p1, p2, p3, tb);
-
-                let q1 = q0 + d_a * (step / 3.0);
-                let q2 = q3 - d_b * (step / 3.0);
-
-                split_segments.push((q0, q1, q2, q3));
-            }
-        } else if let Some(mut t0) = builder.start_tangent {
+            split_segments = calculate_path(p0, t0, p3, -t3_out, MIN_RADIUS, LINE_SEGMENT_LENGTH);
+        } else if let Some(t0) = builder.start_tangent {
             let n0 = Vec2::new(-t0.y, t0.x);
             let d = chord.dot(n0);
             if d.abs() > 0.1 {
-                is_curve = true;
-
                 let turn_dir = d.signum();
                 let mut radius = (chord.length_squared() / (2.0 * d.abs())).abs();
                 radius = radius.max(MIN_RADIUS);
                 let center = p0 + n0 * radius * turn_dir;
-                let start_angle = (p0 - center).to_angle();
-                let end_angle = (p3 - center).to_angle();
-
-                let mut sweep = end_angle - start_angle;
-                if d > 0.0 && sweep < 0.0 {
-                    sweep += std::f32::consts::TAU;
-                }
-                if d < 0.0 && sweep > 0.0 {
-                    sweep -= std::f32::consts::TAU;
-                }
-                sweep = sweep.clamp(-std::f32::consts::TAU * 0.95, std::f32::consts::TAU * 0.95);
-
-                let arc_length = radius * sweep.abs();
-                let splits_by_length = (arc_length / LINE_SEGMENT_LENGTH).ceil() as usize;
-                let max_sweep = std::f32::consts::FRAC_PI_2;
-                let splits_by_angle = (sweep.abs() / max_sweep).ceil() as usize;
-                let num_splits = splits_by_length.max(splits_by_angle).max(1);
-                let step = sweep / num_splits as f32;
-                let k = (4.0 / 3.0) * (step.abs() / 4.0).tan();
-
-                let mut current_angle = start_angle;
-                for _ in 0..num_splits {
-                    let next_angle = current_angle + step;
-
-                    let tan0 = Vec2::new(-current_angle.sin(), current_angle.cos()) * turn_dir;
-                    let tan1 = Vec2::new(-next_angle.sin(), next_angle.cos()) * turn_dir;
-
-                    let q0 = center + Vec2::new(current_angle.cos(), current_angle.sin()) * radius;
-                    let q3 = center + Vec2::new(next_angle.cos(), next_angle.sin()) * radius;
-
-                    let q1 = q0 + tan0 * (k * radius);
-                    let q2 = q3 - tan1 * (k * radius);
-
-                    split_segments.push((q0, q1, q2, q3));
-                    current_angle = next_angle;
-                    out_tangent_p3 = tan1;
-                }
+                split_segments = generate_arc(center, radius, p0, p3, d < 0.0, LINE_SEGMENT_LENGTH);
             } else {
-                straight_line_dir = t0;
+                straight_line_dir = Some(t0);
             }
+        } else {
+            straight_line_dir = Some(chord_dir);
         }
 
-        if !is_curve {
-            let num_splits = (dist / LINE_SEGMENT_LENGTH).ceil().max(1.0) as usize;
-            let step_len = dist / num_splits as f32;
-            for i in 0..num_splits {
-                let q0 = p0 + straight_line_dir * (i as f32 * step_len);
-                let q3 = p0 + straight_line_dir * ((i + 1) as f32 * step_len);
-                split_segments.push((q0, q0.lerp(q3, 0.33), q0.lerp(q3, 0.66), q3));
-            }
-            out_tangent_p3 = straight_line_dir;
+        if let Some(straight_line_dir) = straight_line_dir {
+            split_segments = generate_straight(straight_line_dir, dist, p0, LINE_SEGMENT_LENGTH);
         }
 
         if p0.distance(p3) > SNAP_RADIUS {
