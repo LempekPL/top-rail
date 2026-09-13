@@ -1,4 +1,6 @@
 use crate::camera;
+use crate::railway::manager::{RailwayMode, RailwaySettings};
+use crate::util::{draw_bezier, eval_bezier, eval_derivative};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -37,6 +39,7 @@ pub struct TrackSegment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrackConnection {
     Node(Entity),
+    LoneNode(Entity),
     Segment(Entity),
     None,
 }
@@ -62,11 +65,16 @@ fn build_track(
     mut commands: Commands,
     mut gizmos: Gizmos,
     mut builder: ResMut<TrackBuilder>,
+    r_settings: Res<RailwaySettings>,
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<camera::MainCamera>>,
     r_mouse: Res<ButtonInput<MouseButton>>,
     q_nodes: Query<(Entity, &GlobalTransform, &TrackNode)>,
+    mut q_segments: Query<(Entity, &mut TrackSegment)>,
 ) {
+    if !matches!(r_settings.mode, RailwayMode::Build) {
+        return;
+    }
     let (camera, camera_transform) = *s_camera;
     let Some(cursor_world_pos) = s_window
         .cursor_position()
@@ -98,7 +106,24 @@ fn build_track(
 
     if builder.is_dragging {
         let p0 = builder.start_pos;
-        let p3 = cursor_world_pos;
+        let mut p3 = cursor_world_pos;
+
+        let mut snapped_end_node = None;
+        let mut snapped_end_tangent = None;
+
+        for (entity, transform, node) in q_nodes.iter() {
+            if Some(entity) == builder.start_node {
+                continue;
+            }
+            let node_pos = transform.translation().truncate();
+            if node_pos.distance(cursor_world_pos) < SNAP_RADIUS {
+                p3 = node_pos;
+                snapped_end_tangent = Some(node.outward_tangent);
+                snapped_end_node = Some(entity);
+                break;
+            }
+        }
+
         let chord = p3 - p0;
         let dist = chord.length();
         let chord_dir = chord.normalize_or_zero();
@@ -106,13 +131,42 @@ fn build_track(
         let mut split_segments = Vec::new();
         let mut out_tangent_p3 = chord_dir;
 
+        let mut actual_t0 = builder.start_tangent;
+        // if let Some(t0) = actual_t0 {
+        //     if t0.dot(chord_dir) < 0.0 {
+        //         actual_t0 = Some(-t0);
+        //     }
+        // }
+
         let mut is_curve = false;
         let mut straight_line_dir = chord_dir;
 
-        if let Some(mut t0) = builder.start_tangent {
-            // if t0.dot(chord_dir) < 0.0 {
-            //     t0 = -t0;
-            // }
+        if let Some(t3_out) = snapped_end_tangent {
+            is_curve = true;
+            let t0 = actual_t0.unwrap_or(chord_dir);
+            let t3_in = -t3_out;
+            let control_dist = dist * 0.45;
+            let p1 = p0 + t0 * control_dist;
+            let p2 = p3 - t3_in * control_dist;
+            out_tangent_p3 = t3_out;
+            let num_splits = (dist / LINE_SEGMENT_LENGTH).ceil().max(1.0) as usize;
+            let step = 1.0 / num_splits as f32;
+            for i in 0..num_splits {
+                let ta = i as f32 * step;
+                let tb = (i + 1) as f32 * step;
+
+                let q0 = eval_bezier(p0, p1, p2, p3, ta);
+                let q3 = eval_bezier(p0, p1, p2, p3, tb);
+
+                let d_a = eval_derivative(p0, p1, p2, p3, ta);
+                let d_b = eval_derivative(p0, p1, p2, p3, tb);
+
+                let q1 = q0 + d_a * (step / 3.0);
+                let q2 = q3 - d_b * (step / 3.0);
+
+                split_segments.push((q0, q1, q2, q3));
+            }
+        } else if let Some(mut t0) = builder.start_tangent {
             let n0 = Vec2::new(-t0.y, t0.x);
             let d = chord.dot(n0);
             if d.abs() > 0.1 {
@@ -191,30 +245,72 @@ fn build_track(
 
         if r_mouse.just_released(MouseButton::Left) {
             builder.is_dragging = false;
-            if p0.distance(p3) < SNAP_RADIUS { return; }
-
+            if p0.distance(p3) < SNAP_RADIUS {
+                return;
+            }
             let first = split_segments.first().unwrap();
             let last = split_segments.last().unwrap();
-            if let Some(entity) = builder.start_node {
-                commands.entity(entity).despawn();
+            let mut start_conn = TrackConnection::None;
+            if let Some(snapped_node_ent) = builder.start_node {
+                let mut old_track_ent = None;
+                for (seg_ent, seg) in q_segments.iter() {
+                    if seg.start_node == TrackConnection::LoneNode(snapped_node_ent)
+                        || seg.end_node == TrackConnection::LoneNode(snapped_node_ent)
+                    {
+                        old_track_ent = Some(seg_ent);
+                        break;
+                    }
+                }
+                commands.entity(snapped_node_ent).despawn();
+                if let Some(old_seg) = old_track_ent {
+                    start_conn = TrackConnection::Segment(old_seg);
+                }
             } else {
-                commands.spawn((
-                    TrackNode::new((p0 - first.1).normalize_or_zero()),
-                    Transform::from_translation(p0.extend(0.)),
-                ));
+                let new_node = commands
+                    .spawn((
+                        TrackNode::new((p0 - first.1).normalize_or_zero()),
+                        Transform::from_translation(p0.extend(0.)),
+                    ))
+                    .id();
+                start_conn = TrackConnection::LoneNode(new_node);
             }
-            commands.spawn((
-                TrackNode::new((last.3 - last.2).normalize_or_zero()),
-                Transform::from_translation(last.3.extend(0.)),
-            ));
+            let mut end_conn = TrackConnection::None;
+            if let Some(snapped_node_ent) = snapped_end_node {
+                let mut old_track_ent = None;
+                for (seg_ent, seg) in q_segments.iter() {
+                    if seg.start_node == TrackConnection::LoneNode(snapped_node_ent)
+                        || seg.end_node == TrackConnection::LoneNode(snapped_node_ent)
+                    {
+                        old_track_ent = Some(seg_ent);
+                        break;
+                    }
+                }
+                commands.entity(snapped_node_ent).despawn();
+                if let Some(old_seg) = old_track_ent {
+                    end_conn = TrackConnection::Segment(old_seg);
+                }
+            } else {
+                let new_node = commands
+                    .spawn((
+                        TrackNode::new((last.3 - last.2).normalize_or_zero()),
+                        Transform::from_translation(last.3.extend(0.)),
+                    ))
+                    .id();
+                end_conn = TrackConnection::LoneNode(new_node);
+            }
 
             let mut spawned_segments = Vec::new();
             for (q0, q1, q2, q3) in split_segments.iter() {
-                let id = commands.spawn(TrackSegment {
-                    p0: *q0, p1: *q1, p2: *q2, p3: *q3,
-                    start_node: TrackConnection::None,
-                    end_node: TrackConnection::None,
-                }).id();
+                let id = commands
+                    .spawn(TrackSegment {
+                        p0: *q0,
+                        p1: *q1,
+                        p2: *q2,
+                        p3: *q3,
+                        start_node: TrackConnection::None,
+                        end_node: TrackConnection::None,
+                    })
+                    .id();
                 spawned_segments.push(id);
             }
 
@@ -224,13 +320,12 @@ fn build_track(
                 let prev_conn = if i > 0 {
                     TrackConnection::Segment(spawned_segments[i - 1])
                 } else {
-                    TrackConnection::None
+                    start_conn.clone()
                 };
-
                 let next_conn = if i < spawned_segments.len() - 1 {
                     TrackConnection::Segment(spawned_segments[i + 1])
                 } else {
-                    TrackConnection::None
+                    end_conn.clone()
                 };
 
                 commands.entity(current_ent).insert(TrackSegment {
@@ -243,11 +338,25 @@ fn build_track(
                 });
             }
 
-            // if let Some(node_entity) = builder.start_node {
-            //     if let Ok((_, _, mut node)) = q_nodes.get_mut(node_entity) {
-            //         node.outgoing_tracks.push(spawned_segments[0]);
-            //     }
-            // }
+            if let Some(snapped_node_ent) = builder.start_node {
+                for (_, mut seg) in q_segments.iter_mut() {
+                    if seg.start_node == TrackConnection::LoneNode(snapped_node_ent) {
+                        seg.start_node = TrackConnection::Segment(spawned_segments.first().copied().unwrap());
+                    } else if seg.end_node == TrackConnection::LoneNode(snapped_node_ent) {
+                        seg.end_node = TrackConnection::Segment(spawned_segments.first().copied().unwrap());
+                    }
+                }
+            }
+
+            if let Some(snapped_node_ent) = snapped_end_node {
+                for (_, mut seg) in q_segments.iter_mut() {
+                    if seg.start_node == TrackConnection::LoneNode(snapped_node_ent) {
+                        seg.start_node = TrackConnection::Segment(spawned_segments.last().copied().unwrap());
+                    } else if seg.end_node == TrackConnection::LoneNode(snapped_node_ent) {
+                        seg.end_node = TrackConnection::Segment(spawned_segments.last().copied().unwrap());
+                    }
+                }
+            }
         }
     }
 }
@@ -266,11 +375,8 @@ fn debug_draw_track(
             segment.p3,
             Color::srgb(0.9, 0.9, 0.9),
         );
-        gizmos.circle_2d(
-            segment.p3,
-            3.0,
-            Color::srgb(1.0, 1.0, 1.0),
-        );
+        gizmos.circle_2d(segment.p0, 3.0, Color::srgb(1.0, 1.0, 1.0));
+        gizmos.circle_2d(segment.p3, 3.0, Color::srgb(1.0, 1.0, 1.0));
     }
 
     for (transform, node) in q_nodes.iter() {
@@ -285,24 +391,5 @@ fn debug_draw_track(
             transform.translation().xy() + node.outward_tangent * 10.0,
             Color::srgb(1.0, 1.0, 0.2),
         );
-    }
-}
-
-pub fn draw_bezier(gizmos: &mut Gizmos, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, color: Color) {
-    let pixels_per_segment = 15.0;
-
-    let approx_length = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
-    let calculated_segments = (approx_length / pixels_per_segment).ceil() as usize;
-    let segments = calculated_segments.clamp(10, 256);
-    let mut prev_point = p0;
-    for i in 1..=segments {
-        let t = i as f32 / segments as f32;
-        let u = 1.0 - t;
-
-        let current_point =
-            p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t);
-
-        gizmos.line_2d(prev_point, current_point, color);
-        prev_point = current_point;
     }
 }

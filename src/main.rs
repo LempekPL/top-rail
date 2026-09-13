@@ -2,6 +2,7 @@
 
 mod camera;
 mod railway;
+mod util;
 
 use crate::camera::CameraPlugin;
 use crate::railway::RailwayPlugin;

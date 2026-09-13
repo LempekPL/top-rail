@@ -22,7 +22,7 @@ pub enum RailwayMode {
 
 #[derive(Resource, Default)]
 pub struct RailwaySettings {
-    mode: RailwayMode,
+    pub mode: RailwayMode,
 }
 
 #[derive(Component, Default, Clone)]
@@ -39,7 +39,7 @@ fn change_mode(
     r_keyboard: Res<ButtonInput<KeyCode>>,
     mut s_text: Single<&mut Text, With<ModeText>>,
 ) {
-    if r_keyboard.just_pressed(KeyCode::KeyE) {
+    if r_keyboard.just_pressed(KeyCode::KeyX) {
         r_options.mode = RailwayMode::Drive;
         s_text.0 = "Drive".to_string();
     }
