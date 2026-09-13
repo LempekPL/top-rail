@@ -48,7 +48,7 @@ fn move_camera(
         ortho.scale = ortho.scale.min(CAMERA_ZOOM_MAX).max(CAMERA_ZOOM_MIN);
     }
 
-    if r_mouse.pressed(MouseButton::Right) {
+    if r_mouse.pressed(MouseButton::Right) || r_mouse.pressed(MouseButton::Middle) {
         for mouse_move in m_mouse_move.read() {
             transform.translation +=
                 (mouse_move.delta * Vec2::new(-1., 1.) * ortho.scale).extend(0.0);

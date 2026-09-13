@@ -56,8 +56,8 @@ fn change_mode(
     r_keyboard: Res<ButtonInput<KeyCode>>,
 ) {
     if r_keyboard.just_pressed(KeyCode::Digit1) {
-        if r_options.mode == RailwayMode::Build || r_options.mode == RailwayMode::Bulldoze {
-            r_options.mode = RailwayMode::Drive;
+        if r_options.mode == RailwayMode::Build {
+            r_options.mode = RailwayMode::Bulldoze;
         } else {
             r_options.mode = RailwayMode::Build;
         }
