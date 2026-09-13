@@ -141,6 +141,35 @@ pub fn calculate_path(
     segments
 }
 
+pub fn offset_bezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, offset: f32, reverse: bool) -> (Vec2, Vec2, Vec2, Vec2) {
+    let (q0, q1, q2, q3) = if reverse {
+        (p3, p2, p1, p0)
+    } else {
+        (p0, p1, p2, p3)
+    };
+
+    let off = if reverse { -offset } else { offset };
+
+    let d0 = eval_derivative(q0, q1, q2, q3, 0.0);
+    let n0 = Vec2::new(-d0.y, d0.x).normalize_or_zero();
+
+    let d1 = eval_derivative(q0, q1, q2, q3, 0.33);
+    let n1 = Vec2::new(-d1.y, d1.x).normalize_or_zero();
+
+    let d2 = eval_derivative(q0, q1, q2, q3, 0.66);
+    let n2 = Vec2::new(-d2.y, d2.x).normalize_or_zero();
+
+    let d3 = eval_derivative(q0, q1, q2, q3, 1.0);
+    let n3 = Vec2::new(-d3.y, d3.x).normalize_or_zero();
+
+    (
+        q0 + n0 * off,
+        q1 + n1 * off,
+        q2 + n2 * off,
+        q3 + n3 * off,
+    )
+}
+
 pub fn draw_bezier(gizmos: &mut Gizmos, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, color: Color) {
     let pixels_per_segment = 15.0;
 
