@@ -150,11 +150,7 @@ pub fn draw_bezier(gizmos: &mut Gizmos, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, 
     let mut prev_point = p0;
     for i in 1..=segments {
         let t = i as f32 / segments as f32;
-        let u = 1.0 - t;
-
-        let current_point =
-            p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t);
-
+        let current_point = eval_bezier(p0, p1, p2, p3, t);
         gizmos.line_2d(prev_point, current_point, color);
         prev_point = current_point;
     }

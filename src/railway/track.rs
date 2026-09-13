@@ -14,7 +14,7 @@ const MIN_RADIUS: f32 = 100.0;
 impl Plugin for TrackPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TrackBuilder>();
-        app.add_systems(Update, (build_track, debug_draw_track));
+        app.add_systems(Update, (build_track, bulldoze_track, debug_draw_track));
     }
 }
 
@@ -294,9 +294,11 @@ fn build_track(
             if let Some(snapped_node_ent) = builder.start_node {
                 for (_, mut seg) in q_segments.iter_mut() {
                     if seg.start_node == TrackConnection::LoneNode(snapped_node_ent) {
-                        seg.start_node = TrackConnection::Segment(spawned_segments.first().copied().unwrap());
+                        seg.start_node =
+                            TrackConnection::Segment(spawned_segments.first().copied().unwrap());
                     } else if seg.end_node == TrackConnection::LoneNode(snapped_node_ent) {
-                        seg.end_node = TrackConnection::Segment(spawned_segments.first().copied().unwrap());
+                        seg.end_node =
+                            TrackConnection::Segment(spawned_segments.first().copied().unwrap());
                     }
                 }
             }
@@ -304,12 +306,98 @@ fn build_track(
             if let Some(snapped_node_ent) = snapped_end_node {
                 for (_, mut seg) in q_segments.iter_mut() {
                     if seg.start_node == TrackConnection::LoneNode(snapped_node_ent) {
-                        seg.start_node = TrackConnection::Segment(spawned_segments.last().copied().unwrap());
+                        seg.start_node =
+                            TrackConnection::Segment(spawned_segments.last().copied().unwrap());
                     } else if seg.end_node == TrackConnection::LoneNode(snapped_node_ent) {
-                        seg.end_node = TrackConnection::Segment(spawned_segments.last().copied().unwrap());
+                        seg.end_node =
+                            TrackConnection::Segment(spawned_segments.last().copied().unwrap());
                     }
                 }
             }
+        }
+    }
+}
+
+fn bulldoze_track(
+    mut commands: Commands,
+    r_settings: Res<RailwaySettings>,
+    s_window: Single<&Window, With<PrimaryWindow>>,
+    s_camera: Single<(&Camera, &GlobalTransform), With<camera::MainCamera>>,
+    r_mouse: Res<ButtonInput<MouseButton>>,
+    mut q_segments: Query<(Entity, &mut TrackSegment)>,
+    mut gizmos: Gizmos
+) {
+    if !matches!(r_settings.mode, RailwayMode::Bulldoze) {
+        return;
+    }
+    if !r_mouse.pressed(MouseButton::Left) {
+        return;
+    }
+    let (camera, camera_transform) = *s_camera;
+    let Some(cursor_world_pos) = s_window
+        .cursor_position()
+        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor).ok())
+    else {
+        return;
+    };
+
+    let mut closest_entity = None;
+    let mut min_dist = f32::MAX;
+    let mut target_segment_clone = None;
+
+    for (entity, segment) in q_segments.iter() {
+        for i in 0..=10 {
+            let t = i as f32 / 10.0;
+            let pos = eval_bezier(segment.p0, segment.p1, segment.p2, segment.p3, t);
+            let dist = pos.distance(cursor_world_pos);
+
+            if dist < min_dist {
+                min_dist = dist;
+                closest_entity = Some(entity);
+                target_segment_clone = Some(segment.clone());
+            }
+        }
+    }
+
+    if min_dist < 5.0 {
+        if let (Some(target_ent), Some(target_seg)) = (closest_entity, target_segment_clone) {
+            if let TrackConnection::Segment(next_seg_ent) = target_seg.end_node {
+                let out_tangent = (target_seg.p2 - target_seg.p3).normalize_or_zero();
+                let new_node = commands
+                    .spawn((
+                        TrackNode::new(out_tangent),
+                        Transform::from_translation(target_seg.p3.extend(0.0)),
+                    ))
+                    .id();
+                if let Ok((_, mut next_seg)) = q_segments.get_mut(next_seg_ent) {
+                    if next_seg.start_node == TrackConnection::Segment(target_ent) {
+                        next_seg.start_node = TrackConnection::LoneNode(new_node);
+                    } else if next_seg.end_node == TrackConnection::Segment(target_ent) {
+                        next_seg.end_node = TrackConnection::LoneNode(new_node);
+                    }
+                }
+            } else if let TrackConnection::LoneNode(node_ent) = target_seg.end_node {
+                commands.entity(node_ent).despawn();
+            }
+            if let TrackConnection::Segment(prev_seg_ent) = target_seg.start_node {
+                let out_tangent = (target_seg.p1 - target_seg.p0).normalize_or_zero();
+                let new_node = commands
+                    .spawn((
+                        TrackNode::new(out_tangent),
+                        Transform::from_translation(target_seg.p0.extend(0.0)),
+                    ))
+                    .id();
+                if let Ok((_, mut prev_seg)) = q_segments.get_mut(prev_seg_ent) {
+                    if prev_seg.start_node == TrackConnection::Segment(target_ent) {
+                        prev_seg.start_node = TrackConnection::LoneNode(new_node);
+                    } else if prev_seg.end_node == TrackConnection::Segment(target_ent) {
+                        prev_seg.end_node = TrackConnection::LoneNode(new_node);
+                    }
+                }
+            } else if let TrackConnection::LoneNode(node_ent) = target_seg.start_node {
+                commands.entity(node_ent).despawn();
+            }
+            commands.entity(target_ent).despawn();
         }
     }
 }
