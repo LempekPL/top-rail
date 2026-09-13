@@ -138,7 +138,30 @@ fn build_track(
 
         if let Some(t3_out) = snapped_end_tangent {
             let t0 = actual_t0.unwrap_or(chord_dir);
-            split_segments = calculate_path(p0, t0, p3, -t3_out, MIN_RADIUS, LINE_SEGMENT_LENGTH);
+            let t3_in = -t3_out;
+            if t0.dot(chord_dir) > 0.90 && t3_in.dot(chord_dir) > 0.90 && false {
+                let d = dist * 0.33;
+                let p1 = p0 + t0 * d;
+                let p2 = p3 - t3_in * d;
+
+                let num_splits = (dist / LINE_SEGMENT_LENGTH).ceil().max(1.0) as usize;
+                let step = 1.0 / num_splits as f32;
+
+                for i in 0..num_splits {
+                    let ta = i as f32 * step;
+                    let tb = (i + 1) as f32 * step;
+
+                    let q0 = eval_bezier(p0, p1, p2, p3, ta);
+                    let q3 = eval_bezier(p0, p1, p2, p3, tb);
+
+                    let q1 = q0 + eval_derivative(p0, p1, p2, p3, ta) * (step / 3.0);
+                    let q2 = q3 - eval_derivative(p0, p1, p2, p3, tb) * (step / 3.0);
+
+                    split_segments.push((q0, q1, q2, q3));
+                }
+            } else {
+                split_segments = calculate_path(p0, t0, p3, t3_in, MIN_RADIUS, LINE_SEGMENT_LENGTH);
+            }
         } else if let Some(t0) = builder.start_tangent {
             let n0 = Vec2::new(-t0.y, t0.x);
             let d = chord.dot(n0);
