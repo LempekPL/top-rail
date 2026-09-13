@@ -60,7 +60,8 @@ fn move_camera(
     } else {
         CAMERA_SPEED
     } * ortho.scale
-        * time.delta_secs() * 200.0;
+        * time.delta_secs()
+        * 200.0;
     if r_keyboard.pressed(KeyCode::KeyW) {
         transform.translation.y += camera_speed;
     }

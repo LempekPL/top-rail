@@ -31,6 +31,10 @@ struct ModeText;
 
 fn mode_text() -> impl Scene {
     bsn! {
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(0.0),
+        }
         Text("Build") ModeText
     }
 }
