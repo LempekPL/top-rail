@@ -1,9 +1,9 @@
 use crate::camera::MainCamera;
 use crate::railway::manager::{RailwayMode, RailwaySettings};
 use crate::railway::track::{TrackConnection, TrackSegment};
-use crate::util::{eval_bezier, eval_derivative};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use crate::util::bezier;
 
 #[derive(Default)]
 pub struct TrainPlugin;
@@ -55,7 +55,7 @@ fn spawn_train(
     for (entity, segment) in q_segments.iter() {
         for i in 0..=10 {
             let t = i as f32 / 10.0;
-            let pos = eval_bezier(segment.p0, segment.p1, segment.p2, segment.p3, t);
+            let pos = bezier::eval(segment.p0, segment.p1, segment.p2, segment.p3, t);
             let dist = pos.distance(cursor_pos);
 
             if dist < min_dist {
@@ -64,7 +64,7 @@ fn spawn_train(
                 closest_t = t;
                 closest_pos = pos;
                 closest_tangent =
-                    eval_derivative(segment.p0, segment.p1, segment.p2, segment.p3, t);
+                    bezier::derivative(segment.p0, segment.p1, segment.p2, segment.p3, t);
             }
         }
     }
@@ -141,7 +141,7 @@ fn move_trains(
                 TrackConnection::Segment(next_ent) => {
                     if let Ok(next_seg) = q_segments.get(*next_ent) {
                         let exit_tangent =
-                            eval_derivative(segment.p0, segment.p1, segment.p2, segment.p3, 1.0)
+                            bezier::derivative(segment.p0, segment.p1, segment.p2, segment.p3, 1.0)
                                 .normalize_or_zero();
                         let nose_dir = exit_tangent * train.logical_dir;
                         let remainder = train.t_pos - 1.0;
@@ -153,7 +153,7 @@ fn move_trains(
                         } else {
                             train.t_pos = 1.0 - remainder;
                         }
-                        let entry_tangent = eval_derivative(
+                        let entry_tangent = bezier::derivative(
                             next_seg.p0,
                             next_seg.p1,
                             next_seg.p2,
@@ -178,7 +178,7 @@ fn move_trains(
                 TrackConnection::Segment(next_ent) => {
                     if let Ok(next_seg) = q_segments.get(*next_ent) {
                         let exit_tangent =
-                            eval_derivative(segment.p0, segment.p1, segment.p2, segment.p3, 0.0)
+                            bezier::derivative(segment.p0, segment.p1, segment.p2, segment.p3, 0.0)
                                 .normalize_or_zero();
                         let nose_dir = exit_tangent * train.logical_dir;
                         let remainder = train.t_pos.abs();
@@ -190,7 +190,7 @@ fn move_trains(
                         } else {
                             train.t_pos = remainder;
                         }
-                        let entry_tangent = eval_derivative(
+                        let entry_tangent = bezier::derivative(
                             next_seg.p0,
                             next_seg.p1,
                             next_seg.p2,
@@ -213,7 +213,7 @@ fn move_trains(
         }
 
         if let Ok(active_segment) = q_segments.get(train.current_track) {
-            let pos = eval_bezier(
+            let pos = bezier::eval(
                 active_segment.p0,
                 active_segment.p1,
                 active_segment.p2,
@@ -222,7 +222,7 @@ fn move_trains(
             );
             transform.translation = pos.extend(1.0);
 
-            let tangent = eval_derivative(
+            let tangent = bezier::derivative(
                 active_segment.p0,
                 active_segment.p1,
                 active_segment.p2,
