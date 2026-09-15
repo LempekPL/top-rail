@@ -62,6 +62,72 @@ impl TrackNode {
     }
 }
 
+fn find_segment_path(
+    start_ent: Entity,
+    end_ent: Entity,
+    drag_dir: Vec2,
+    q_segments: &Query<(Entity, &mut TrackSegment)>,
+) -> Option<Vec<(TrackSegment, bool)>> {
+    if start_ent == end_ent {
+        if let Ok((_, seg)) = q_segments.get(start_ent) {
+            let tangent = (seg.p3 - seg.p0).normalize_or_zero();
+            let is_forward = drag_dir.dot(tangent) >= 0.0;
+            return Some(vec![(seg.clone(), is_forward)]);
+        }
+        return None;
+    }
+
+    let mut path = Vec::new();
+    let mut current = start_ent;
+    while current != end_ent {
+        if let Ok((_, seg)) = q_segments.get(current) {
+            path.push((seg.clone(), true));
+            if let TrackConnection::Segment(next_ent) = seg.end_node {
+                current = next_ent;
+                if path.len() > 100 {
+                    break;
+                }
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    if current == end_ent {
+        if let Ok((_, seg)) = q_segments.get(current) {
+            path.push((seg.clone(), true));
+            return Some(path);
+        }
+    }
+
+    path.clear();
+    current = start_ent;
+    while current != end_ent {
+        if let Ok((_, seg)) = q_segments.get(current) {
+            path.push((seg.clone(), false));
+            if let TrackConnection::Segment(prev_ent) = seg.start_node {
+                current = prev_ent;
+                if path.len() > 100 {
+                    break;
+                }
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    if current == end_ent {
+        if let Ok((_, seg)) = q_segments.get(current) {
+            path.push((seg.clone(), false));
+            return Some(path);
+        }
+    }
+
+    None
+}
+
 fn build_track(
     mut commands: Commands,
     mut gizmos: Gizmos,
@@ -105,7 +171,6 @@ fn build_track(
                         let tan =
                             eval_derivative(segment.p0, segment.p1, segment.p2, segment.p3, t)
                                 .normalize_or_zero();
-
                         let normal = Vec2::new(-tan.y, tan.x);
                         let side = (cursor_world_pos - pos).dot(normal).signum();
 
@@ -127,11 +192,13 @@ fn build_track(
     }
 
     if builder.is_dragging {
-        let p0 = builder.start_pos;
+        let mut p0 = builder.start_pos;
         let mut p3 = cursor_world_pos;
 
         let mut snapped_end_node = None;
         let mut snapped_end_tangent = None;
+        let mut split_segments = Vec::new();
+        let mut is_parallel_build = false;
 
         for (entity, transform, node) in q_nodes.iter() {
             if Some(entity) == builder.start_node {
@@ -154,7 +221,6 @@ fn build_track(
                         let tan =
                             eval_derivative(segment.p0, segment.p1, segment.p2, segment.p3, t)
                                 .normalize_or_zero();
-
                         let normal = Vec2::new(-tan.y, tan.x);
                         let side = (cursor_world_pos - pos).dot(normal).signum();
 
@@ -165,64 +231,169 @@ fn build_track(
                         if final_tan.dot(chord_dir_temp) < 0.0 {
                             final_tan = -final_tan;
                         }
-                        snapped_end_tangent = Some(-final_tan);
+                        snapped_end_tangent = Some(final_tan);
                     }
                 }
             }
         }
 
-        let chord = p3 - p0;
-        let dist = chord.length();
-        let chord_dir = chord.normalize_or_zero();
+        if snapped_end_node.is_none() {
+            if let Some((start_ent, d_start, start_t)) = find_closest_segment(p0, &q_segments) {
+                if let Some((end_ent, d_end, end_t)) = find_closest_segment(p3, &q_segments) {
+                    // Jeśli oba końce leżą idealnie na odpowiednim dystansie od torów
+                    if (d_start - TRACK_SPACING).abs() < 5.0 && (d_end - TRACK_SPACING).abs() < 5.0
+                    {
+                        let drag_dir = p3 - p0;
+                        if let Some(path) =
+                            find_segment_path(start_ent, end_ent, drag_dir, &q_segments)
+                        {
+                            is_parallel_build = true;
 
-        let mut straight_line_dir = None;
-        let mut split_segments = Vec::new();
-        let actual_t0 = builder.start_tangent;
+                            // Oblicz dokładny offset ze startowego segmentu
+                            let Ok((_, start_seg)) = q_segments.get(start_ent) else {
+                                return;
+                            };
+                            let proj_p0 = eval_bezier(
+                                start_seg.p0,
+                                start_seg.p1,
+                                start_seg.p2,
+                                start_seg.p3,
+                                start_t,
+                            );
+                            let tan_p0 = eval_derivative(
+                                start_seg.p0,
+                                start_seg.p1,
+                                start_seg.p2,
+                                start_seg.p3,
+                                start_t,
+                            )
+                            .normalize_or_zero();
+                            let normal_p0 = Vec2::new(-tan_p0.y, tan_p0.x);
+                            let side = (p0 - proj_p0).dot(normal_p0).signum();
+                            let exact_offset = TRACK_SPACING * side;
 
-        if let Some(t3_out) = snapped_end_tangent {
-            let t0 = actual_t0.unwrap_or(chord_dir);
-            let t3_in = -t3_out;
-            if t0.dot(chord_dir) > 0.90 && t3_in.dot(chord_dir) > 0.90 && false {
-                let d = dist * 0.33;
-                let p1 = p0 + t0 * d;
-                let p2 = p3 - t3_in * d;
+                            for (i, (seg, is_forward)) in path.iter().enumerate() {
+                                // Ustalamy granice ucinania (tylko pierwszy i ostatni segment są ucinane)
+                                let local_start = if i == 0 {
+                                    start_t
+                                } else {
+                                    if *is_forward { 0.0 } else { 1.0 }
+                                };
+                                let local_end = if i == path.len() - 1 {
+                                    end_t
+                                } else {
+                                    if *is_forward { 1.0 } else { 0.0 }
+                                };
 
-                let num_splits = (dist / LINE_SEGMENT_LENGTH).ceil().max(1.0) as usize;
-                let step = 1.0 / num_splits as f32;
+                                let actual_is_forward = local_start <= local_end;
+                                let t_min = local_start.min(local_end);
+                                let t_max = local_start.max(local_end);
 
-                for i in 0..num_splits {
-                    let ta = i as f32 * step;
-                    let tb = (i + 1) as f32 * step;
+                                // Ucinamy i natychmiast odsuwamy na bok
+                                let (sq0, sq1, sq2, sq3) = extract_sub_bezier(
+                                    seg.p0, seg.p1, seg.p2, seg.p3, t_min, t_max,
+                                );
+                                split_segments.push(offset_bezier(
+                                    sq0,
+                                    sq1,
+                                    sq2,
+                                    sq3,
+                                    exact_offset,
+                                    !actual_is_forward,
+                                ));
+                            }
 
-                    let q0 = eval_bezier(p0, p1, p2, p3, ta);
-                    let q3 = eval_bezier(p0, p1, p2, p3, tb);
-
-                    let q1 = q0 + eval_derivative(p0, p1, p2, p3, ta) * (step / 3.0);
-                    let q2 = q3 - eval_derivative(p0, p1, p2, p3, tb) * (step / 3.0);
-
-                    split_segments.push((q0, q1, q2, q3));
+                            if let Some(first) = split_segments.first() {
+                                p0 = first.0;
+                            }
+                            if let Some(last) = split_segments.last() {
+                                p3 = last.3;
+                            }
+                        }
+                    }
                 }
-            } else {
-                split_segments = calculate_path(p0, t0, p3, t3_in, MIN_RADIUS, LINE_SEGMENT_LENGTH);
             }
-        } else if let Some(t0) = builder.start_tangent {
-            let n0 = Vec2::new(-t0.y, t0.x);
-            let d = chord.dot(n0);
-            if d.abs() > 0.1 {
-                let turn_dir = d.signum();
-                let mut radius = (chord.length_squared() / (2.0 * d.abs())).abs();
-                radius = radius.max(MIN_RADIUS);
-                let center = p0 + n0 * radius * turn_dir;
-                split_segments = generate_arc(center, radius, p0, p3, d < 0.0, LINE_SEGMENT_LENGTH);
-            } else {
-                straight_line_dir = Some(t0);
-            }
-        } else {
-            straight_line_dir = Some(chord_dir);
         }
 
-        if let Some(straight_line_dir) = straight_line_dir {
-            split_segments = generate_straight(straight_line_dir, dist, p0, LINE_SEGMENT_LENGTH);
+        if !is_parallel_build {
+            let chord = p3 - p0;
+            let mut dist = chord.length();
+            let chord_dir = chord.normalize_or_zero();
+
+            let mut straight_line_dir = None;
+            let actual_t0 = builder.start_tangent;
+
+            if let Some(t3_out) = snapped_end_tangent {
+                let t0 = actual_t0.unwrap_or(chord_dir);
+                let t3_in = -t3_out;
+
+                let dot_ends = t0.dot(t3_in);
+                let dot_0_chord = t0.dot(chord_dir);
+                let dot_3_chord = t3_in.dot(chord_dir);
+
+                // todo: fix too straight line
+                if dot_0_chord > 0.99 && dot_3_chord > 0.99 {
+                    straight_line_dir = Some(chord_dir);
+                } else if (dot_0_chord > 0.85 && dot_3_chord > 0.85)
+                    || (dot_ends > 0.85 && dot_0_chord > 0.2 && dot_3_chord > 0.2)
+                {
+                    let is_s_curve = dot_ends > 0.85 && dot_0_chord <= 0.95;
+                    let d = dist * if is_s_curve { 0.45 } else { 0.33 };
+
+                    let p1 = p0 + t0 * d;
+                    let p2 = p3 - t3_in * d;
+
+                    let num_splits = (dist / LINE_SEGMENT_LENGTH).ceil().max(1.0) as usize;
+                    let step = 1.0 / num_splits as f32;
+
+                    for i in 0..num_splits {
+                        let ta = i as f32 * step;
+                        let tb = (i + 1) as f32 * step;
+
+                        let q0 = eval_bezier(p0, p1, p2, p3, ta);
+                        let q3 = eval_bezier(p0, p1, p2, p3, tb);
+
+                        let q1 = q0 + eval_derivative(p0, p1, p2, p3, ta) * (step / 3.0);
+                        let q2 = q3 - eval_derivative(p0, p1, p2, p3, tb) * (step / 3.0);
+
+                        split_segments.push((q0, q1, q2, q3));
+                    }
+                } else {
+                    split_segments =
+                        calculate_path(p0, t0, p3, t3_in, MIN_RADIUS, LINE_SEGMENT_LENGTH);
+                }
+            } else if let Some(t0) = builder.start_tangent {
+                let n0 = Vec2::new(-t0.y, t0.x);
+                let d = chord.dot(n0);
+                if d.abs() > 15.0 {
+                    let turn_dir = d.signum();
+                    let mut radius = (chord.length_squared() / (2.0 * d.abs())).abs();
+                    radius = radius.max(MIN_RADIUS);
+                    let center = p0 + n0 * radius * turn_dir;
+                    split_segments =
+                        generate_arc(center, radius, p0, p3, d < 0.0, LINE_SEGMENT_LENGTH);
+                } else {
+                    // Dociągamy kursor fizycznie do idealnej osi prostej!
+                    let mut proj_dist = chord.dot(t0);
+                    let mut actual_dir = t0;
+
+                    if proj_dist < 0.0 {
+                        actual_dir = -t0;
+                        proj_dist = -proj_dist;
+                    }
+
+                    straight_line_dir = Some(actual_dir);
+                    p3 = p0 + actual_dir * proj_dist;
+                    dist = proj_dist;
+                }
+            } else {
+                straight_line_dir = Some(chord_dir);
+            }
+
+            if let Some(straight_line_dir) = straight_line_dir {
+                split_segments =
+                    generate_straight(straight_line_dir, dist, p0, LINE_SEGMENT_LENGTH);
+            }
         }
 
         if p0.distance(p3) > SNAP_RADIUS {

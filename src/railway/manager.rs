@@ -8,7 +8,7 @@ impl Plugin for RailwayManagerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RailwaySettings>();
         app.add_systems(Startup, mode_text.spawn());
-        app.add_systems(Update, (change_mode, update_mode_text.run_if(resource_changed::<RailwaySettings>)));
+        app.add_systems(Update, (change_mode, update_mode.run_if(resource_changed::<RailwaySettings>)));
     }
 }
 
@@ -21,9 +21,19 @@ pub enum RailwayMode {
     Drive,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct RailwaySettings {
     pub mode: RailwayMode,
+    pub prev_mode: RailwayMode,
+}
+
+impl Default for RailwaySettings {
+    fn default() -> Self {
+        Self {
+            mode: RailwayMode::Build,
+            prev_mode: RailwayMode::Bulldoze,
+        }
+    }
 }
 
 #[derive(Component, Default, Clone)]
@@ -39,8 +49,8 @@ fn mode_text() -> impl Scene {
     }
 }
 
-fn update_mode_text(
-    mut r_options: ResMut<RailwaySettings>,
+fn update_mode(
+    r_options: Res<RailwaySettings>,
     mut s_text: Single<&mut Text, With<ModeText>>,
 ) {
     match r_options.mode {
@@ -55,20 +65,32 @@ fn change_mode(
     mut r_options: ResMut<RailwaySettings>,
     r_keyboard: Res<ButtonInput<KeyCode>>,
 ) {
+    let tmp = r_options.mode.clone();
     if r_keyboard.just_pressed(KeyCode::Digit1) {
         if r_options.mode == RailwayMode::Build {
-            r_options.mode = RailwayMode::Bulldoze;
+            r_options.mode = r_options.prev_mode.clone();
         } else {
             r_options.mode = RailwayMode::Build;
         }
     }
     if r_keyboard.just_pressed(KeyCode::KeyB) {
-        r_options.mode = RailwayMode::Bulldoze;
+        if r_options.mode == RailwayMode::Bulldoze {
+            if r_options.prev_mode == RailwayMode::Spawn {
+                r_options.mode = RailwayMode::Drive;
+            } else {
+                r_options.mode = r_options.prev_mode.clone();
+            }
+        } else {
+            r_options.mode = RailwayMode::Bulldoze;
+        }
     }
     if r_keyboard.just_pressed(KeyCode::Digit2) {
         r_options.mode = RailwayMode::Drive;
     }
     if r_keyboard.just_pressed(KeyCode::Digit3) {
         r_options.mode = RailwayMode::Spawn;
+    }
+    if tmp != r_options.mode {
+        r_options.prev_mode = tmp;
     }
 }

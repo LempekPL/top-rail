@@ -170,6 +170,38 @@ pub fn offset_bezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, offset: f32, revers
     )
 }
 
+pub fn split_bezier(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32) -> ((Vec2, Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2, Vec2)) {
+    let q0 = p0.lerp(p1, t);
+    let q1 = p1.lerp(p2, t);
+    let q2 = p2.lerp(p3, t);
+
+    let r0 = q0.lerp(q1, t);
+    let r1 = q1.lerp(q2, t);
+
+    let s0 = r0.lerp(r1, t);
+
+    ((p0, q0, r0, s0), (s0, r1, q2, p3))
+}
+
+pub fn extract_sub_bezier(
+    p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t_start: f32, t_end: f32
+) -> (Vec2, Vec2, Vec2, Vec2) {
+    if (t_end - t_start).abs() < 0.001 {
+        let pt = eval_bezier(p0, p1, p2, p3, t_start);
+        return (pt, pt, pt, pt);
+    }
+
+    let q0 = eval_bezier(p0, p1, p2, p3, t_start);
+    let q3 = eval_bezier(p0, p1, p2, p3, t_end);
+
+    let dt = t_end - t_start;
+
+    let q1 = q0 + eval_derivative(p0, p1, p2, p3, t_start) * (dt / 3.0);
+    let q2 = q3 - eval_derivative(p0, p1, p2, p3, t_end) * (dt / 3.0);
+
+    (q0, q1, q2, q3)
+}
+
 pub fn draw_bezier(gizmos: &mut Gizmos, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, color: Color) {
     let pixels_per_segment = 15.0;
 
