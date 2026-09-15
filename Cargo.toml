@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = { version = "0.19.1", default-features = false, features = ["2d", "ui", "bevy_dev_tools"] }
-bevy-inspector-egui = { version = "0.37.0", default-features = false, features = ["2d"] }
+bevy_framepace = "0.22"
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]
