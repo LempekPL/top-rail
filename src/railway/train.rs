@@ -1,16 +1,23 @@
 use crate::camera::MainCamera;
-use crate::railway::manager::{RailwayMode, RailwaySettings};
+use crate::railway::manager::RailwayState;
 use crate::railway::track::{TrackConnection, TrackSegment};
+use crate::util::bezier;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use crate::util::bezier;
 
 #[derive(Default)]
 pub struct TrainPlugin;
 
 impl Plugin for TrainPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (spawn_train, drive_controls, move_trains));
+        app.add_systems(
+            Update,
+            (
+                spawn_train,
+                drive_controls.run_if(in_state(RailwayState::Drive)),
+                move_trains,
+            ),
+        );
     }
 }
 
@@ -22,17 +29,15 @@ pub struct Train {
     pub logical_dir: f32,
 }
 
+#[allow(dead_code, unused)]
 fn spawn_train(
     mut commands: Commands,
-    r_settings: Res<RailwaySettings>,
     r_mouse: Res<ButtonInput<MouseButton>>,
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     q_segments: Query<(Entity, &TrackSegment)>,
 ) {
-    if !matches!(r_settings.mode, RailwayMode::Spawn) {
-        return;
-    }
+    return;
     if !r_mouse.just_pressed(MouseButton::Left) {
         return;
     }
@@ -98,15 +103,7 @@ fn spawn_train(
     }
 }
 
-fn drive_controls(
-    r_settings: Res<RailwaySettings>,
-    r_keyboard: Res<ButtonInput<KeyCode>>,
-    mut q_trains: Query<&mut Train>,
-) {
-    if !matches!(r_settings.mode, RailwayMode::Drive) {
-        return;
-    }
-
+fn drive_controls(r_keyboard: Res<ButtonInput<KeyCode>>, mut q_trains: Query<&mut Train>) {
     for mut train in q_trains.iter_mut() {
         if r_keyboard.pressed(KeyCode::ArrowUp) || r_keyboard.pressed(KeyCode::KeyE) {
             train.velocity = 150.0;

@@ -1,3 +1,4 @@
+use crate::controls::Controls;
 use bevy::prelude::*;
 use std::cmp::PartialEq;
 
@@ -6,91 +7,72 @@ pub struct RailwayManagerPlugin;
 
 impl Plugin for RailwayManagerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RailwaySettings>();
-        app.add_systems(Startup, mode_text.spawn());
-        app.add_systems(Update, (change_mode, update_mode.run_if(resource_changed::<RailwaySettings>)));
+        app.init_state::<RailwayState>();
+        app.add_systems(Startup, setup_text_state.spawn());
+        app.add_systems(
+            Update,
+            (
+                change_state,
+                update_state.run_if(state_changed::<RailwayState>),
+            ),
+        );
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub enum RailwayMode {
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
+pub enum RailwayState {
     #[default]
+    None,
     Build,
     Bulldoze,
     Spawn,
     Drive,
 }
 
-#[derive(Resource)]
-pub struct RailwaySettings {
-    pub mode: RailwayMode,
-    pub prev_mode: RailwayMode,
-}
-
-impl Default for RailwaySettings {
-    fn default() -> Self {
-        Self {
-            mode: RailwayMode::Build,
-            prev_mode: RailwayMode::Bulldoze,
-        }
-    }
-}
-
 #[derive(Component, Default, Clone)]
-struct ModeText;
+struct RailwayStateText;
 
-fn mode_text() -> impl Scene {
+fn setup_text_state() -> impl Scene {
     bsn! {
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(0.0),
         }
-        Text("Build") ModeText
+        Text("Build") RailwayStateText
     }
 }
 
-fn update_mode(
-    r_options: Res<RailwaySettings>,
-    mut s_text: Single<&mut Text, With<ModeText>>,
+fn update_state(
+    s_railway: Res<State<RailwayState>>,
+    mut s_text: Single<&mut Text, With<RailwayStateText>>,
 ) {
-    match r_options.mode {
-        RailwayMode::Build => s_text.0 = "Build".to_string(),
-        RailwayMode::Bulldoze => s_text.0 = "Bulldoze".to_string(),
-        RailwayMode::Spawn => s_text.0 = "Spawn".to_string(),
-        RailwayMode::Drive => s_text.0 = "Drive".to_string(),
+    match s_railway.get() {
+        RailwayState::Build => s_text.0 = "Build".to_string(),
+        RailwayState::Bulldoze => s_text.0 = "Bulldoze".to_string(),
+        RailwayState::Spawn => s_text.0 = "Spawn".to_string(),
+        RailwayState::Drive => s_text.0 = "Drive".to_string(),
+        RailwayState::None => s_text.0 = "".to_string(),
     }
 }
 
-fn change_mode(
-    mut r_options: ResMut<RailwaySettings>,
-    r_keyboard: Res<ButtonInput<KeyCode>>,
+fn change_state(
+    r_current: Res<State<RailwayState>>,
+    mut r_next: ResMut<NextState<RailwayState>>,
+    controls: Controls,
 ) {
-    let tmp = r_options.mode.clone();
-    if r_keyboard.just_pressed(KeyCode::Digit1) {
-        if r_options.mode == RailwayMode::Build {
-            r_options.mode = r_options.prev_mode.clone();
+    if controls.just_pressed(|k| k.esc) {
+        r_next.set(RailwayState::None);
+    } else if controls.just_pressed(|k| k.build) {
+        if r_current.get() == &RailwayState::Build {
+            r_next.set(RailwayState::None);
         } else {
-            r_options.mode = RailwayMode::Build;
+            r_next.set(RailwayState::Build);
         }
-    }
-    if r_keyboard.just_pressed(KeyCode::KeyB) {
-        if r_options.mode == RailwayMode::Bulldoze {
-            if r_options.prev_mode == RailwayMode::Spawn {
-                r_options.mode = RailwayMode::Drive;
-            } else {
-                r_options.mode = r_options.prev_mode.clone();
-            }
+    } else if controls.just_pressed(|k| k.bulldoze) {
+        if r_current.get() == &RailwayState::Bulldoze {
+            r_next.set(RailwayState::None);
         } else {
-            r_options.mode = RailwayMode::Bulldoze;
+            r_next.set(RailwayState::Bulldoze);
         }
-    }
-    if r_keyboard.just_pressed(KeyCode::Digit2) {
-        r_options.mode = RailwayMode::Drive;
-    }
-    if r_keyboard.just_pressed(KeyCode::Digit3) {
-        r_options.mode = RailwayMode::Spawn;
-    }
-    if tmp != r_options.mode {
-        r_options.prev_mode = tmp;
     }
 }

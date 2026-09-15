@@ -3,6 +3,7 @@
 mod camera;
 mod railway;
 mod util;
+mod controls;
 
 use crate::camera::CameraPlugin;
 use crate::railway::RailwayPlugin;
@@ -10,6 +11,7 @@ use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTime
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
+use crate::controls::ControlsPlugin;
 
 fn main() {
     App::new()
@@ -39,11 +41,8 @@ fn main() {
         .add_plugins(CameraPlugin)
         .add_plugins(RailwayPlugin)
         .add_plugins(FramepacePlugin)
+        .add_plugins(ControlsPlugin)
         .add_systems(Startup, setup_framerate)
-        // .add_plugins(EguiPlugin::default())
-        // .add_plugins(
-        //     WorldInspectorPlugin::default().run_if(input_toggle_active(true, KeyCode::Escape)),
-        // )
         .run();
 }
 

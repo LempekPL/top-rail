@@ -1,5 +1,5 @@
 use crate::camera;
-use crate::railway::manager::{RailwayMode, RailwaySettings};
+use crate::railway::manager::RailwayState;
 use crate::util::*;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -20,9 +20,8 @@ impl Plugin for TrackPlugin {
         app.add_systems(
             Update,
             (
-                build_track_vis,
-                build_track,
-                bulldoze_track,
+                (build_track_vis, build_track).run_if(in_state(RailwayState::Build)),
+                bulldoze_track.run_if(in_state(RailwayState::Bulldoze)),
                 debug_draw_track,
             ),
         );
@@ -160,15 +159,11 @@ fn find_segment_path(
 
 fn build_track_vis(
     mut gizmos: Gizmos,
-    r_settings: Res<RailwaySettings>,
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<camera::MainCamera>>,
     q_nodes: Query<&GlobalTransform, With<TrackNode>>,
     mut q_segments: Query<(Entity, &mut TrackSegment)>,
 ) {
-    if !matches!(r_settings.mode, RailwayMode::Build) {
-        return;
-    }
     let (camera, camera_transform) = *s_camera;
     let Some(cursor_world_pos) = s_window
         .cursor_position()
@@ -193,16 +188,12 @@ fn build_track(
     mut commands: Commands,
     mut gizmos: Gizmos,
     mut builder: ResMut<TrackBuilder>,
-    r_settings: Res<RailwaySettings>,
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<camera::MainCamera>>,
     r_mouse: Res<ButtonInput<MouseButton>>,
     q_nodes: Query<(Entity, &GlobalTransform, &TrackNode)>,
     mut q_segments: Query<(Entity, &mut TrackSegment)>,
 ) {
-    if !matches!(r_settings.mode, RailwayMode::Build) {
-        return;
-    }
     let (camera, camera_transform) = *s_camera;
     let Some(cursor_world_pos) = s_window
         .cursor_position()
@@ -386,15 +377,11 @@ fn build_track(
 
 fn bulldoze_track(
     mut commands: Commands,
-    r_settings: Res<RailwaySettings>,
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<camera::MainCamera>>,
     r_mouse: Res<ButtonInput<MouseButton>>,
     mut q_segments: Query<(Entity, &mut TrackSegment)>,
 ) {
-    if !matches!(r_settings.mode, RailwayMode::Bulldoze) {
-        return;
-    }
     if !r_mouse.pressed(MouseButton::Left) {
         return;
     }
@@ -506,8 +493,8 @@ fn validate_segments(segments: &Vec<(Vec2, Vec2, Vec2, Vec2)>) -> ValidatedTrack
     if first.0.distance(last.3) < MIN_LENGTH_TO_BUILD && first == last {
         return ValidatedTrack::TooShort;
     }
-    for (s1, s2, s3, s4) in segments {
-        if !is_segment_valid(*s1, *s2, *s3, *s3, MIN_RADIUS) {
+    for (s0, s1, s2, s3) in segments {
+        if !is_segment_valid(*s0, *s1, *s2, *s3, MIN_RADIUS) {
             return ValidatedTrack::SegmentSharp;
         }
     }
