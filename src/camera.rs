@@ -30,8 +30,6 @@ fn move_camera(
     r_state: Option<Res<State<PlayingState>>>,
     mut m_mouse_scroll: MessageReader<MouseWheel>,
     mut m_mouse_move: MessageReader<MouseMotion>,
-    // time: Res<Time>,
-    // r_keyboard: Res<ButtonInput<KeyCode>>,
 ) {
     let Ok((mut transform, mut projection)) = q_camera.single_mut() else {
         return;
@@ -55,24 +53,4 @@ fn move_camera(
                 (mouse_move.delta * Vec2::new(-1., 1.) * ortho.scale).extend(0.0);
         }
     }
-
-    // let camera_speed = if r_keyboard.pressed(KeyCode::ShiftLeft) {
-    //     CAMERA_SPEED_UP
-    // } else {
-    //     CAMERA_SPEED
-    // } * ortho.scale
-    //     * time.delta_secs()
-    //     * 200.0;
-    // if r_keyboard.pressed(KeyCode::KeyW) {
-    //     transform.translation.y += camera_speed;
-    // }
-    // if r_keyboard.pressed(KeyCode::KeyS) {
-    //     transform.translation.y -= camera_speed;
-    // }
-    // if r_keyboard.pressed(KeyCode::KeyA) {
-    //     transform.translation.x -= camera_speed;
-    // }
-    // if r_keyboard.pressed(KeyCode::KeyD) {
-    //     transform.translation.x += camera_speed;
-    // }
 }

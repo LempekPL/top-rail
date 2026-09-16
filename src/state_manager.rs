@@ -108,7 +108,6 @@ fn paused_change_state(
 fn playing_change_state(
     play_current: Res<State<PlayingState>>,
     mut play_next: ResMut<NextState<PlayingState>>,
-    game_current: Res<State<GameState>>,
     mut game_next: ResMut<NextState<GameState>>,
     controls: Controls,
 ) {

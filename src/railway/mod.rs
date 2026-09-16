@@ -1,6 +1,6 @@
 use bevy::app::plugin_group;
 
-mod track;
+pub(crate) mod track;
 mod train;
 
 plugin_group! {

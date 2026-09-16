@@ -7,6 +7,7 @@ use bevy::feathers::theme::{ThemedText, UiTheme};
 use bevy::input_focus::tab_navigation::TabGroup;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
+use crate::save_load::{LoadGame, SaveGame};
 
 pub struct MenuPlugin;
 
@@ -119,6 +120,16 @@ fn main_menu() -> impl Scene {
                 }),
 
                 @FeathersButton {
+                    @caption: bsn! { Text("Load") ThemedText }
+                }
+                on(|_: On<Activate>, mut r_next: ResMut<NextState<GameState>>, mut load_message: MessageWriter<LoadGame>| {
+                    r_next.set(GameState::Playing);
+                    load_message.write(LoadGame {
+                        name: "test1".to_string(),
+                    });
+                }),
+
+                @FeathersButton {
                     @caption: bsn! { Text("Settings") ThemedText }
                 }
                 on(|_: On<Activate>, mut r_next: ResMut<NextState<MenuUiState>>| {
@@ -156,6 +167,16 @@ fn pause_menu() -> impl Scene {
                 }
                 on(|_: On<Activate>, mut r_next: ResMut<NextState<GameState>>| {
                     r_next.set(GameState::Playing);
+                }),
+
+                @FeathersButton {
+                    @caption: bsn! { Text("Save") ThemedText }
+                }
+                on(|_: On<Activate>, mut r_next: ResMut<NextState<GameState>>, mut save_message: MessageWriter<SaveGame>| {
+                    r_next.set(GameState::Playing);
+                    save_message.write(SaveGame {
+                        name: "test1".to_string(),
+                    });
                 }),
 
                 @FeathersButton {
@@ -207,3 +228,7 @@ fn settings_menu(back_func: impl Scene) -> impl Scene {
         ]
     }
 }
+
+
+// TOR EMGOVE
+
