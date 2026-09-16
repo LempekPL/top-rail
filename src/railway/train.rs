@@ -1,6 +1,6 @@
 use crate::camera::MainCamera;
-use crate::railway::manager::RailwayState;
 use crate::railway::track::{TrackConnection, TrackSegment};
+use crate::state_manager::PlayingState;
 use crate::util::bezier;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -14,7 +14,7 @@ impl Plugin for TrainPlugin {
             Update,
             (
                 spawn_train,
-                drive_controls.run_if(in_state(RailwayState::Drive)),
+                drive_controls.run_if(in_state(PlayingState::Drive)),
                 move_trains,
             ),
         );

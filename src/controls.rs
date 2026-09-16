@@ -1,7 +1,7 @@
 use bevy::app::{App, Plugin};
 use bevy::ecs::system::SystemParam;
 use bevy::input::ButtonInput;
-use bevy::prelude::{KeyCode, MouseButton, Res, Resource};
+use bevy::prelude::*;
 
 pub struct ControlsPlugin;
 

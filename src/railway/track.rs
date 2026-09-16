@@ -1,5 +1,5 @@
 use crate::camera;
-use crate::railway::manager::RailwayState;
+use crate::state_manager::{DespawnWhenMainMenu, PlayingState};
 use crate::util::*;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -20,8 +20,8 @@ impl Plugin for TrackPlugin {
         app.add_systems(
             Update,
             (
-                (build_track_vis, build_track).run_if(in_state(RailwayState::Build)),
-                bulldoze_track.run_if(in_state(RailwayState::Bulldoze)),
+                (build_track_vis, build_track).run_if(in_state(PlayingState::Build)),
+                bulldoze_track.run_if(in_state(PlayingState::Bulldoze)),
                 debug_draw_track,
             ),
         );
@@ -83,10 +83,11 @@ impl TrackNode {
         }
     }
 
-    pub fn new_transform(point: Vec2, dir: Vec2) -> (Self, Transform) {
+    pub fn new_transform(point: Vec2, dir: Vec2) -> impl Bundle {
         (
             Self::new((point - dir).normalize_or_zero()),
             Transform::from_translation(point.extend(0.)),
+            DespawnWhenMainMenu,
         )
     }
 }
@@ -162,7 +163,7 @@ fn build_track_vis(
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<camera::MainCamera>>,
     q_nodes: Query<&GlobalTransform, With<TrackNode>>,
-    mut q_segments: Query<(Entity, &mut TrackSegment)>,
+    _q_segments: Query<(Entity, &TrackSegment)>,
 ) {
     let (camera, camera_transform) = *s_camera;
     let Some(cursor_world_pos) = s_window
@@ -173,7 +174,7 @@ fn build_track_vis(
     };
 
     let mut pos = cursor_world_pos;
-    for (transform) in q_nodes.iter() {
+    for transform in q_nodes.iter() {
         let node_pos = transform.translation().truncate();
         if node_pos.distance(cursor_world_pos) < SNAP_RADIUS {
             pos = node_pos;
@@ -286,7 +287,7 @@ fn build_track(
 
             let spawned_segments = segments
                 .iter()
-                .map(|_| commands.spawn_empty().id())
+                .map(|_| commands.spawn(DespawnWhenMainMenu).id())
                 .collect::<Vec<_>>();
 
             // update connections for old and new track
@@ -406,12 +407,8 @@ fn bulldoze_track(
         };
 
         if let TrackConnection::Segment(next_seg_ent) = target_seg.end_node {
-            let out_tangent = (target_seg.p2 - target_seg.p3).normalize_or_zero();
             let new_node = commands
-                .spawn((
-                    TrackNode::new(out_tangent),
-                    Transform::from_translation(target_seg.p3.extend(0.0)),
-                ))
+                .spawn(TrackNode::new_transform(target_seg.p3, target_seg.p2))
                 .id();
             if let Ok((_, mut next_seg)) = q_segments.get_mut(next_seg_ent) {
                 if next_seg.start_node == TrackConnection::Segment(target_ent) {
@@ -424,12 +421,8 @@ fn bulldoze_track(
             commands.entity(node_ent).despawn();
         }
         if let TrackConnection::Segment(prev_seg_ent) = target_seg.start_node {
-            let out_tangent = (target_seg.p1 - target_seg.p0).normalize_or_zero();
             let new_node = commands
-                .spawn((
-                    TrackNode::new(out_tangent),
-                    Transform::from_translation(target_seg.p0.extend(0.0)),
-                ))
+                .spawn(TrackNode::new_transform(target_seg.p0, target_seg.p1))
                 .id();
             if let Ok((_, mut prev_seg)) = q_segments.get_mut(prev_seg_ent) {
                 if prev_seg.start_node == TrackConnection::Segment(target_ent) {

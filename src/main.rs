@@ -1,17 +1,21 @@
 #![allow(dead_code)]
 
 mod camera;
-mod railway;
-mod util;
 mod controls;
+mod menu;
+mod railway;
+pub mod state_manager;
+mod util;
 
 use crate::camera::CameraPlugin;
+use crate::controls::ControlsPlugin;
+use crate::menu::MenuPlugin;
 use crate::railway::RailwayPlugin;
+use crate::state_manager::StateManagerPlugin;
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig};
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
-use crate::controls::ControlsPlugin;
 
 fn main() {
     App::new()
@@ -38,10 +42,10 @@ fn main() {
                 },
             },
         })
+        .add_plugins(MenuPlugin)
+        .add_plugins((RailwayPlugin, StateManagerPlugin, ControlsPlugin))
         .add_plugins(CameraPlugin)
-        .add_plugins(RailwayPlugin)
         .add_plugins(FramepacePlugin)
-        .add_plugins(ControlsPlugin)
         .add_systems(Startup, setup_framerate)
         .run();
 }

@@ -1,6 +1,6 @@
+use crate::state_manager::PlayingState;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
-use crate::railway::manager::RailwayState;
 
 pub struct CameraPlugin;
 
@@ -27,7 +27,7 @@ fn setup_camera(mut commands: Commands) {
 fn move_camera(
     mut q_camera: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
     r_mouse: Res<ButtonInput<MouseButton>>,
-    r_state: Res<State<RailwayState>>,
+    r_state: Option<Res<State<PlayingState>>>,
     mut m_mouse_scroll: MessageReader<MouseWheel>,
     mut m_mouse_move: MessageReader<MouseMotion>,
     // time: Res<Time>,
@@ -48,7 +48,8 @@ fn move_camera(
         ortho.scale = ortho.scale.min(CAMERA_ZOOM_MAX).max(CAMERA_ZOOM_MIN);
     }
 
-    if (matches!(r_state.get(), RailwayState::None | RailwayState::Drive) && r_mouse.pressed(MouseButton::Left)) || r_mouse.pressed(MouseButton::Middle) {
+    let left_move = r_state.map_or(false, |state| matches!(state.get(), PlayingState::None | PlayingState::Drive));
+    if (left_move && r_mouse.pressed(MouseButton::Left)) || r_mouse.pressed(MouseButton::Middle) {
         for mouse_move in m_mouse_move.read() {
             transform.translation +=
                 (mouse_move.delta * Vec2::new(-1., 1.) * ortho.scale).extend(0.0);
