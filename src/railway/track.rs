@@ -8,8 +8,8 @@ use bevy::window::PrimaryWindow;
 pub struct TrackPlugin;
 
 const TRACK_SPACING: f32 = 20.0;
-const SNAP_RADIUS: f32 = 10.0;
-const SNAP_STRAIGHT_RADIUS: f32 = 15.0;
+const NODE_SNAP_RADIUS: f32 = 10.0;
+const BUILD_SNAP_DISTANCE: f32 = 15.0;
 const SEGMENT_LENGTH: f32 = 100.0;
 const MIN_LENGTH_TO_BUILD: f32 = 20.0;
 const MIN_RADIUS: f32 = 100.0;
@@ -177,7 +177,7 @@ fn build_track_vis(
     let mut pos = cursor_world_pos;
     for transform in q_nodes.iter() {
         let node_pos = transform.translation().truncate();
-        if node_pos.distance(cursor_world_pos) < SNAP_RADIUS {
+        if node_pos.distance(cursor_world_pos) < NODE_SNAP_RADIUS {
             pos = node_pos;
             break;
         }
@@ -213,7 +213,7 @@ fn build_track(
 
         for (entity, transform, node) in q_nodes.iter() {
             let node_pos = transform.translation().truncate();
-            if node_pos.distance(cursor_world_pos) < SNAP_RADIUS {
+            if node_pos.distance(cursor_world_pos) < NODE_SNAP_RADIUS {
                 builder.start_pos = node_pos;
                 builder.start_tangent = Some(node.outward_tangent);
                 builder.start_node = Some(entity);
@@ -239,7 +239,7 @@ fn build_track(
         let mut end_tangent = None;
         for (entity, transform, node) in q_nodes.iter() {
             let node_pos = transform.translation().truncate();
-            if node_pos.distance(cursor_world_pos) < SNAP_RADIUS {
+            if node_pos.distance(cursor_world_pos) < NODE_SNAP_RADIUS {
                 end_node = Some(entity);
                 end_tangent = Some(node.outward_tangent);
                 p3 = node_pos;
@@ -256,13 +256,26 @@ fn build_track(
             let normal = Vec2::new(-tangent.y, tangent.x);
             let chord = p3 - p0;
             let d = chord.dot(normal);
-            let proj_dist = chord.dot(tangent);
+            let mut proj_dist = chord.dot(tangent);
             if proj_dist < 0. {
                 // disallow curves >180deg
                 p3 = p0 + normal * d;
             }
-            if d.abs() < SNAP_STRAIGHT_RADIUS && proj_dist > 0. {
+
+            let dist_straight = d.abs();
+            let dist_45_pos = ((d - proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
+            let dist_45_neg = ((d + proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
+
+            if dist_straight < BUILD_SNAP_DISTANCE && proj_dist > 0. {
                 segments = create_straight(p0, p0 + tangent * proj_dist, SEGMENT_LENGTH);
+            } else if dist_45_pos < BUILD_SNAP_DISTANCE && proj_dist > 0. {
+                let snap_len = (proj_dist + d) * std::f32::consts::FRAC_1_SQRT_2;
+                let snap_dir = (tangent + normal).normalize();
+                segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
+            } else if dist_45_neg < BUILD_SNAP_DISTANCE && proj_dist > 0. {
+                let snap_len = (proj_dist - d) * std::f32::consts::FRAC_1_SQRT_2;
+                let snap_dir = (tangent - normal).normalize();
+                segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
             } else {
                 segments = create_arc(p0, tangent, p3, SEGMENT_LENGTH);
             }
@@ -552,7 +565,7 @@ fn debug_draw_track(
     for (transform, node) in q_nodes.iter() {
         gizmos.circle_2d(
             transform.translation().truncate(),
-            SNAP_RADIUS,
+            NODE_SNAP_RADIUS,
             Color::srgb(0.2, 0.5, 1.0),
         );
 
