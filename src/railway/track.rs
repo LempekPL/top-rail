@@ -3,16 +3,22 @@ use crate::state_manager::{DespawnWhenMainMenu, PlayingState};
 use crate::util::*;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use std::cmp::PartialEq;
 
 #[derive(Default)]
 pub struct TrackPlugin;
 
 const TRACK_SPACING: f32 = 20.0;
-const NODE_SNAP_RADIUS: f32 = 10.0;
+const NEW_TRACK_SNAP_RADIUS: f32 = 10.0;
 const BUILD_SNAP_DISTANCE: f32 = 15.0;
 const SEGMENT_LENGTH: f32 = 100.0;
 const MIN_LENGTH_TO_BUILD: f32 = 20.0;
 const MIN_RADIUS: f32 = 100.0;
+const FINER_SEGMENT_RADIUS: f32 = 35.0;
+const _: () = assert!(
+    NEW_TRACK_SNAP_RADIUS + TRACK_SPACING < FINER_SEGMENT_RADIUS,
+    "track snapping needs to be bigger to use finer snapping"
+);
 
 impl Plugin for TrackPlugin {
     fn build(&self, app: &mut App) {
@@ -20,7 +26,12 @@ impl Plugin for TrackPlugin {
         app.add_systems(
             Update,
             (
-                (build_track_vis, build_track).run_if(in_state(PlayingState::Build)),
+                (
+                    build_track_snapper,
+                    build_track_spawner.run_if(|builder: Res<TrackBuilder>| builder.is_building),
+                )
+                    .chain()
+                    .run_if(in_state(PlayingState::Build)),
                 bulldoze_track.run_if(in_state(PlayingState::Bulldoze)),
                 debug_draw_track,
             ),
@@ -29,12 +40,76 @@ impl Plugin for TrackPlugin {
     }
 }
 
+#[derive(Default, PartialEq, Clone)]
+pub enum SnapNode {
+    #[default]
+    None,
+    NoSnap {
+        pos: Vec2,
+    },
+    LoneNode {
+        node: Entity,
+        pos: Vec2,
+        tangent: Vec2,
+    },
+    Parallel {
+        segment: Entity,
+        pos: Vec2,
+        normal: Vec2,
+        side: i8,
+    },
+    Junction {
+        segment: Entity,
+        pos: Vec2,
+        normal: Vec2,
+    },
+}
+
+impl SnapNode {
+    pub fn tangent(&self) -> Option<Vec2> {
+        match self {
+            SnapNode::LoneNode { tangent, .. }
+            | SnapNode::Parallel {
+                normal: tangent, ..
+            }
+            | SnapNode::Junction {
+                normal: tangent, ..
+            } => Some(*tangent),
+            _ => None,
+        }
+    }
+
+    fn pos(&self) -> Vec2 {
+        match self {
+            SnapNode::None => Vec2::ZERO,
+            SnapNode::NoSnap { pos, .. }
+            | SnapNode::LoneNode { pos, .. }
+            | SnapNode::Parallel { pos, .. }
+            | SnapNode::Junction { pos, .. } => pos.clone(),
+        }
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct TrackBuilder {
-    pub is_dragging: bool,
-    pub start_pos: Vec2,
-    pub start_tangent: Option<Vec2>,
-    pub start_node: Option<Entity>,
+    pub is_building: bool,
+    pub drag_dir: i8,
+    pub start_snap: SnapNode,
+    pub current_snap: SnapNode,
+}
+
+impl TrackBuilder {
+    fn stop(&mut self) {
+        self.is_building = false;
+        self.drag_dir = 0;
+    }
+
+    fn reset(&mut self) {
+        self.is_building = false;
+        self.drag_dir = 0;
+        self.current_snap = SnapNode::None;
+        self.start_snap = SnapNode::None;
+    }
 }
 
 #[derive(Component, Debug, Clone)]
@@ -93,112 +168,14 @@ impl TrackNode {
     }
 }
 
-fn find_segment_path(
-    start_ent: Entity,
-    end_ent: Entity,
-    drag_dir: Vec2,
-    q_segments: &Query<(Entity, &mut TrackSegment)>,
-) -> Option<Vec<(TrackSegment, bool)>> {
-    if start_ent == end_ent {
-        if let Ok((_, seg)) = q_segments.get(start_ent) {
-            let tangent = (seg.p3 - seg.p0).normalize_or_zero();
-            let is_forward = drag_dir.dot(tangent) >= 0.0;
-            return Some(vec![(seg.clone(), is_forward)]);
-        }
-        return None;
-    }
-
-    let mut path = Vec::new();
-    let mut current = start_ent;
-    while current != end_ent {
-        if let Ok((_, seg)) = q_segments.get(current) {
-            path.push((seg.clone(), true));
-            if let TrackConnection::Segment(next_ent) = seg.end_node {
-                current = next_ent;
-                if path.len() > 100 {
-                    break;
-                }
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    if current == end_ent {
-        if let Ok((_, seg)) = q_segments.get(current) {
-            path.push((seg.clone(), true));
-            return Some(path);
-        }
-    }
-
-    path.clear();
-    current = start_ent;
-    while current != end_ent {
-        if let Ok((_, seg)) = q_segments.get(current) {
-            path.push((seg.clone(), false));
-            if let TrackConnection::Segment(prev_ent) = seg.start_node {
-                current = prev_ent;
-                if path.len() > 100 {
-                    break;
-                }
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    if current == end_ent {
-        if let Ok((_, seg)) = q_segments.get(current) {
-            path.push((seg.clone(), false));
-            return Some(path);
-        }
-    }
-
-    None
-}
-
-fn build_track_vis(
-    mut gizmos: Gizmos,
-    s_window: Single<&Window, With<PrimaryWindow>>,
-    s_camera: Single<(&Camera, &GlobalTransform), With<camera::MainCamera>>,
-    q_nodes: Query<&GlobalTransform, With<TrackNode>>,
-    _q_segments: Query<(Entity, &TrackSegment)>,
-) {
-    let (camera, camera_transform) = *s_camera;
-    let Some(cursor_world_pos) = s_window
-        .cursor_position()
-        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor).ok())
-    else {
-        return;
-    };
-
-    let mut pos = cursor_world_pos;
-    for transform in q_nodes.iter() {
-        let node_pos = transform.translation().truncate();
-        if node_pos.distance(cursor_world_pos) < NODE_SNAP_RADIUS {
-            pos = node_pos;
-            break;
-        }
-    }
-
-    gizmos.circle_2d(pos, 5., Color::WHITE);
-}
-
-fn reset_building(mut builder: ResMut<TrackBuilder>) {
-    builder.is_dragging = false;
-}
-
-fn build_track(
-    mut commands: Commands,
+fn build_track_snapper(
     mut gizmos: Gizmos,
     mut builder: ResMut<TrackBuilder>,
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<camera::MainCamera>>,
     r_mouse: Res<ButtonInput<MouseButton>>,
     q_nodes: Query<(Entity, &GlobalTransform, &TrackNode)>,
-    mut q_segments: Query<(Entity, &mut TrackSegment)>,
+    q_segments: Query<(Entity, &TrackSegment)>,
 ) {
     let (camera, camera_transform) = *s_camera;
     let Some(cursor_world_pos) = s_window
@@ -208,190 +185,301 @@ fn build_track(
         return;
     };
 
-    if r_mouse.just_pressed(MouseButton::Left) {
-        let mut snapped = false;
+    let mut snap = SnapNode::NoSnap {
+        pos: cursor_world_pos,
+    };
 
-        for (entity, transform, node) in q_nodes.iter() {
-            let node_pos = transform.translation().truncate();
-            if node_pos.distance(cursor_world_pos) < NODE_SNAP_RADIUS {
-                builder.start_pos = node_pos;
-                builder.start_tangent = Some(node.outward_tangent);
-                builder.start_node = Some(entity);
-                snapped = true;
-                break;
-            }
+    for (entity, transform, node) in q_nodes.iter() {
+        let node_pos = transform.translation().truncate();
+        if node_pos.distance(cursor_world_pos) < NEW_TRACK_SNAP_RADIUS {
+            snap = SnapNode::LoneNode {
+                pos: node_pos,
+                node: entity,
+                tangent: node.outward_tangent,
+            };
+            break;
         }
-
-        if !snapped {
-            builder.start_pos = cursor_world_pos;
-            builder.start_tangent = None;
-            builder.start_node = None;
-        }
-
-        builder.is_dragging = true;
     }
 
-    if builder.is_dragging {
-        let p0 = builder.start_pos;
-        let mut p3 = cursor_world_pos;
-
-        let mut end_node = None;
-        let mut end_tangent = None;
-        for (entity, transform, node) in q_nodes.iter() {
-            let node_pos = transform.translation().truncate();
-            if node_pos.distance(cursor_world_pos) < NODE_SNAP_RADIUS {
-                end_node = Some(entity);
-                end_tangent = Some(node.outward_tangent);
-                p3 = node_pos;
-                break;
+    if matches!(snap, SnapNode::NoSnap { .. }) {
+        let mut min_snap_dist = NEW_TRACK_SNAP_RADIUS;
+        for (entity, ts) in q_segments.iter() {
+            let mut is_close = false;
+            let test_segments = 10;
+            for i in 0..=test_segments {
+                let t = i as f32 / test_segments as f32;
+                let current_point = bezier::eval(ts.p0, ts.p1, ts.p2, ts.p3, t);
+                if cursor_world_pos.distance(current_point) < FINER_SEGMENT_RADIUS {
+                    is_close = true;
+                    break;
+                }
+            }
+            if is_close {
+                let fine_segments = 100;
+                for i in 0..=fine_segments {
+                    let t = i as f32 / fine_segments as f32;
+                    let current_point = bezier::eval(ts.p0, ts.p1, ts.p2, ts.p3, t);
+                    let tangent =
+                        bezier::derivative(ts.p0, ts.p1, ts.p2, ts.p3, t).normalize_or_zero();
+                    if tangent == Vec2::ZERO {
+                        continue;
+                    }
+                    let normal = Vec2::new(-tangent.y, tangent.x);
+                    let dist_center = cursor_world_pos.distance(current_point);
+                    if dist_center < min_snap_dist {
+                        min_snap_dist = dist_center;
+                        snap = SnapNode::Junction {
+                            pos: current_point,
+                            segment: entity,
+                            normal,
+                        };
+                    }
+                    let snap_left = current_point + normal * TRACK_SPACING;
+                    let dist_left = cursor_world_pos.distance(snap_left);
+                    if dist_left < min_snap_dist {
+                        min_snap_dist = dist_left;
+                        snap = SnapNode::Parallel {
+                            pos: snap_left,
+                            segment: entity,
+                            normal,
+                            side: 1,
+                        };
+                    }
+                    let snap_right = current_point - normal * TRACK_SPACING;
+                    let dist_right = cursor_world_pos.distance(snap_right);
+                    if dist_right < min_snap_dist {
+                        min_snap_dist = dist_right;
+                        snap = SnapNode::Parallel {
+                            pos: snap_right,
+                            segment: entity,
+                            normal,
+                            side: -1,
+                        };
+                    }
+                }
             }
         }
+    }
+    gizmos.circle_2d(snap.pos(), 5., Color::WHITE);
+    if r_mouse.just_pressed(MouseButton::Left) {
+        builder.is_building = true;
+        builder.start_snap = snap;
+    } else if builder.is_building {
+        builder.current_snap = snap;
+    }
+}
 
-        let segments;
-        if let Some(tangent) = end_tangent {
-            let chord_dir = (p3 - p0).normalize_or_zero();
-            let t0 = builder.start_tangent.unwrap_or(chord_dir);
-            segments = create_segmented_bezier(p0, t0, p3, tangent, SEGMENT_LENGTH);
-        } else if let Some(tangent) = builder.start_tangent {
-            let normal = Vec2::new(-tangent.y, tangent.x);
+fn build_track_spawner(
+    mut commands: Commands,
+    mut gizmos: Gizmos,
+    mut builder: ResMut<TrackBuilder>,
+    r_mouse: Res<ButtonInput<MouseButton>>,
+    q_nodes: Query<(Entity, &GlobalTransform, &TrackNode)>,
+    mut q_segments: Query<(Entity, &mut TrackSegment)>,
+) {
+    if matches!(builder.current_snap, SnapNode::None) {
+        return;
+    }
+    let p0 = builder.start_snap.pos();
+    let mut p3 = builder.current_snap.pos();
+    if p0 == p3 {
+        return;
+    }
+    let mut start_tangent = None;
+    let mut start_normal = None;
+    match builder.start_snap {
+        SnapNode::LoneNode { tangent, .. } => {
+            start_tangent = Some(tangent);
+            start_normal = Some(Vec2::new(-tangent.y, tangent.x));
+        }
+        SnapNode::Parallel { normal, .. } | SnapNode::Junction { normal, .. } => {
+            start_normal = Some(normal);
             let chord = p3 - p0;
-            let d = chord.dot(normal);
-            let mut proj_dist = chord.dot(tangent);
-            if proj_dist < 0. {
-                // disallow curves >180deg
-                p3 = p0 + normal * d;
+            if chord.length_squared() < MIN_LENGTH_TO_BUILD {
+                let track_dir_candidate = Vec2::new(normal.y, -normal.x);
+                if chord.dot(track_dir_candidate) > 0. {
+                    builder.drag_dir = 1;
+                } else {
+                    builder.drag_dir = -1;
+                }
             }
-
-            let dist_straight = d.abs();
-            let dist_45_pos = ((d - proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
-            let dist_45_neg = ((d + proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
-
-            if dist_straight < BUILD_SNAP_DISTANCE && proj_dist > 0. {
-                segments = create_straight(p0, p0 + tangent * proj_dist, SEGMENT_LENGTH);
-            } else if dist_45_pos < BUILD_SNAP_DISTANCE && proj_dist > 0. {
-                let snap_len = (proj_dist + d) * std::f32::consts::FRAC_1_SQRT_2;
-                let snap_dir = (tangent + normal).normalize();
-                segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
-            } else if dist_45_neg < BUILD_SNAP_DISTANCE && proj_dist > 0. {
-                let snap_len = (proj_dist - d) * std::f32::consts::FRAC_1_SQRT_2;
-                let snap_dir = (tangent - normal).normalize();
-                segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
+            if builder.drag_dir != 0 {
+                start_tangent = Some(Vec2::new(normal.y, -normal.x) * builder.drag_dir as f32);
             } else {
-                segments = create_arc(p0, tangent, p3, SEGMENT_LENGTH);
+                start_tangent = Some(Vec2::new(normal.y, -normal.x));
+            }
+        }
+        _ => {}
+    }
+    let segments;
+    if let SnapNode::Parallel { normal, .. } | SnapNode::Junction { normal, .. } =
+        builder.current_snap
+    {
+        let chord_dir = (p3 - p0).normalize_or_zero();
+        let mut track_dir_candidate = Vec2::new(normal.y, -normal.x);
+        if track_dir_candidate.dot(chord_dir) < 0. {
+            track_dir_candidate = -track_dir_candidate;
+        }
+        let t0 = start_tangent.unwrap_or(chord_dir);
+        let mut tmp_seg = create_segmented_bezier(p0, t0, p3, track_dir_candidate, SEGMENT_LENGTH);
+        if matches!(validate_segments(&tmp_seg), ValidatedTrack::SegmentSharp) {
+            let tmp_seg2 =
+                create_segmented_bezier(p0, t0, p3, -track_dir_candidate, SEGMENT_LENGTH);
+            if !matches!(validate_segments(&tmp_seg2), ValidatedTrack::SegmentSharp) {
+                tmp_seg = tmp_seg2;
+            }
+        }
+        segments = tmp_seg;
+    } else if let SnapNode::LoneNode { tangent, .. } = builder.current_snap {
+        let chord_dir = (p3 - p0).normalize_or_zero();
+        let t0 = start_tangent.unwrap_or(chord_dir);
+        segments = create_segmented_bezier(p0, t0, p3, -tangent, SEGMENT_LENGTH);
+    } else if let Some(tangent) = start_tangent {
+        let normal = start_normal.unwrap();
+        let chord = p3 - p0;
+        let d = chord.dot(normal);
+        let proj_dist = chord.dot(tangent);
+        if proj_dist < 0. {
+            // disallow curves >180deg
+            p3 = p0 + normal * d;
+        }
+        let dist_straight = d.abs();
+        let dist_45_pos = ((d - proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
+        let dist_45_neg = ((d + proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
+        if dist_straight < BUILD_SNAP_DISTANCE && proj_dist > 0. {
+            segments = create_straight(p0, p0 + tangent * proj_dist, SEGMENT_LENGTH);
+        } else if dist_45_pos < BUILD_SNAP_DISTANCE && proj_dist > 0. {
+            let snap_len = (proj_dist + d) * std::f32::consts::FRAC_1_SQRT_2;
+            let snap_dir = (tangent + normal).normalize();
+            segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
+        } else if dist_45_neg < BUILD_SNAP_DISTANCE && proj_dist > 0. {
+            let snap_len = (proj_dist - d) * std::f32::consts::FRAC_1_SQRT_2;
+            let snap_dir = (tangent - normal).normalize();
+            segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
+        } else {
+            segments = create_arc(p0, tangent, p3, SEGMENT_LENGTH);
+        }
+    } else {
+        segments = create_straight(p0, p3, SEGMENT_LENGTH);
+    }
+
+    let validation = validate_segments(&segments);
+
+    if validation.drawable() {
+        for (sg0, sg1, sg2, sg3) in segments.iter() {
+            let color = if validation.spawnable() {
+                Color::srgb(0., 1., 0.)
+            } else {
+                Color::srgb(1., 0., 0.)
+            };
+            draw_bezier(&mut gizmos, *sg0, *sg1, *sg2, *sg3, color);
+            gizmos.circle_2d(*sg0, 3.0, Color::srgb(1., 1., 1.));
+        }
+    }
+
+    if !r_mouse.pressed(MouseButton::Left) {
+        if !validation.spawnable() {
+            builder.reset();
+            return;
+        }
+
+        let spawned_segments = segments
+            .iter()
+            .map(|_| commands.spawn(DespawnWhenMainMenu).id())
+            .collect::<Vec<_>>();
+
+        // update connections for old and new track
+        let start_conn = if let SnapNode::LoneNode {
+            node: snapped_node, ..
+        } = builder.start_snap
+        {
+            let mut snapped_track = None;
+            for (ent, mut seg) in q_segments.iter_mut() {
+                if seg.start_node == TrackConnection::LoneNode(snapped_node) {
+                    seg.start_node = TrackConnection::Segment(*spawned_segments.first().unwrap());
+                    snapped_track = Some(ent);
+                    break;
+                } else if seg.end_node == TrackConnection::LoneNode(snapped_node) {
+                    seg.end_node = TrackConnection::Segment(*spawned_segments.first().unwrap());
+                    snapped_track = Some(ent);
+                    break;
+                }
+            }
+            commands.entity(snapped_node).despawn();
+            if let Some(snapped_track) = snapped_track {
+                TrackConnection::Segment(snapped_track)
+            } else {
+                TrackConnection::None
             }
         } else {
-            segments = create_straight(p0, p3, SEGMENT_LENGTH);
-        }
+            let first = segments.first().unwrap();
+            TrackConnection::LoneNode(
+                commands
+                    .spawn(TrackNode::new_transform(first.0, first.1))
+                    .id(),
+            )
+        };
 
-        let validation = validate_segments(&segments);
-
-        if validation.drawable() {
-            for (sg0, sg1, sg2, sg3) in segments.iter() {
-                let color = if validation.spawnable() {
-                    Color::srgb(0., 1., 0.)
-                } else {
-                    Color::srgb(1., 0., 0.)
-                };
-                draw_bezier(&mut gizmos, *sg0, *sg1, *sg2, *sg3, color);
-                gizmos.circle_2d(*sg0, 3.0, Color::srgb(1., 1., 1.));
-            }
-        }
-
-        if r_mouse.just_released(MouseButton::Left) {
-            builder.is_dragging = false;
-            if !validation.spawnable() {
-                return;
-            }
-
-            let spawned_segments = segments
-                .iter()
-                .map(|_| commands.spawn(DespawnWhenMainMenu).id())
-                .collect::<Vec<_>>();
-
-            // update connections for old and new track
-            let start_conn = if let Some(snapped_node) = builder.start_node {
-                let mut snapped_track = None;
-                for (ent, mut seg) in q_segments.iter_mut() {
-                    if seg.start_node == TrackConnection::LoneNode(snapped_node) {
-                        seg.start_node =
-                            TrackConnection::Segment(*spawned_segments.first().unwrap());
-                        snapped_track = Some(ent);
-                        break;
-                    } else if seg.end_node == TrackConnection::LoneNode(snapped_node) {
-                        seg.end_node = TrackConnection::Segment(*spawned_segments.first().unwrap());
-                        snapped_track = Some(ent);
-                        break;
-                    }
+        let end_conn = if let SnapNode::LoneNode {
+            node: snapped_node, ..
+        } = builder.current_snap
+        {
+            let mut snapped_track = None;
+            for (ent, mut seg) in q_segments.iter_mut() {
+                if seg.start_node == TrackConnection::LoneNode(snapped_node) {
+                    seg.start_node = TrackConnection::Segment(*spawned_segments.last().unwrap());
+                    snapped_track = Some(ent);
+                    break;
+                } else if seg.end_node == TrackConnection::LoneNode(snapped_node) {
+                    seg.end_node = TrackConnection::Segment(*spawned_segments.last().unwrap());
+                    snapped_track = Some(ent);
+                    break;
                 }
-                commands.entity(snapped_node).despawn();
-                if let Some(snapped_track) = snapped_track {
-                    TrackConnection::Segment(snapped_track)
-                } else {
-                    TrackConnection::None
-                }
+            }
+            commands.entity(snapped_node).despawn();
+            if let Some(snapped_track) = snapped_track {
+                TrackConnection::Segment(snapped_track)
             } else {
-                let first = segments.first().unwrap();
-                TrackConnection::LoneNode(
-                    commands
-                        .spawn(TrackNode::new_transform(first.0, first.1))
-                        .id(),
-                )
+                TrackConnection::None
+            }
+        } else {
+            let last = segments.last().unwrap();
+            TrackConnection::LoneNode(
+                commands
+                    .spawn(TrackNode::new_transform(last.3, last.2))
+                    .id(),
+            )
+        };
+
+        for i in 0..segments.len() {
+            let current_ent = spawned_segments[i];
+
+            let prev_conn = if i > 0 {
+                TrackConnection::Segment(spawned_segments[i - 1])
+            } else {
+                start_conn.clone()
+            };
+            let next_conn = if i < spawned_segments.len() - 1 {
+                TrackConnection::Segment(spawned_segments[i + 1])
+            } else {
+                end_conn.clone()
             };
 
-            let end_conn = if let Some(snapped_node) = end_node {
-                let mut snapped_track = None;
-                for (ent, mut seg) in q_segments.iter_mut() {
-                    if seg.start_node == TrackConnection::LoneNode(snapped_node) {
-                        seg.start_node =
-                            TrackConnection::Segment(*spawned_segments.last().unwrap());
-                        snapped_track = Some(ent);
-                        break;
-                    } else if seg.end_node == TrackConnection::LoneNode(snapped_node) {
-                        seg.end_node = TrackConnection::Segment(*spawned_segments.last().unwrap());
-                        snapped_track = Some(ent);
-                        break;
-                    }
-                }
-                commands.entity(snapped_node).despawn();
-                if let Some(snapped_track) = snapped_track {
-                    TrackConnection::Segment(snapped_track)
-                } else {
-                    TrackConnection::None
-                }
-            } else {
-                let last = segments.last().unwrap();
-                TrackConnection::LoneNode(
-                    commands
-                        .spawn(TrackNode::new_transform(last.3, last.2))
-                        .id(),
-                )
-            };
-
-            for i in 0..segments.len() {
-                let current_ent = spawned_segments[i];
-
-                let prev_conn = if i > 0 {
-                    TrackConnection::Segment(spawned_segments[i - 1])
-                } else {
-                    start_conn.clone()
-                };
-                let next_conn = if i < spawned_segments.len() - 1 {
-                    TrackConnection::Segment(spawned_segments[i + 1])
-                } else {
-                    end_conn.clone()
-                };
-
-                commands.entity(current_ent).insert(TrackSegment {
-                    p0: segments[i].0,
-                    p1: segments[i].1,
-                    p2: segments[i].2,
-                    p3: segments[i].3,
-                    start_node: prev_conn,
-                    end_node: next_conn,
-                });
-            }
+            commands.entity(current_ent).insert(TrackSegment {
+                p0: segments[i].0,
+                p1: segments[i].1,
+                p2: segments[i].2,
+                p3: segments[i].3,
+                start_node: prev_conn,
+                end_node: next_conn,
+            });
         }
+        builder.reset();
     }
+}
+
+fn reset_building(mut builder: ResMut<TrackBuilder>) {
+    builder.stop();
 }
 
 fn bulldoze_track(
@@ -405,7 +493,10 @@ fn bulldoze_track(
     if !r_mouse.pressed(MouseButton::Left) {
         return;
     }
-    if q_interactions.iter().any(|interaction| *interaction != Interaction::None) {
+    if q_interactions
+        .iter()
+        .any(|interaction| *interaction != Interaction::None)
+    {
         return;
     }
     let (camera, camera_transform) = *s_camera;
@@ -565,7 +656,7 @@ fn debug_draw_track(
     for (transform, node) in q_nodes.iter() {
         gizmos.circle_2d(
             transform.translation().truncate(),
-            NODE_SNAP_RADIUS,
+            NEW_TRACK_SNAP_RADIUS,
             Color::srgb(0.2, 0.5, 1.0),
         );
 

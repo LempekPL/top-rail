@@ -107,10 +107,9 @@ pub fn create_segmented_bezier(
 ) -> Vec<(Vec2, Vec2, Vec2, Vec2)> {
     let dist = p0.distance(p3);
     let d = dist * 0.45;
-    let t3_in = -t3;
 
     let p1 = p0 + t0 * d;
-    let p2 = p3 - t3_in * d;
+    let p2 = p3 - t3 * d;
 
     let num_splits = (dist / segment_length).ceil().max(1.0) as usize;
     let step = 1.0 / num_splits as f32;
