@@ -25,6 +25,7 @@ impl Plugin for TrackPlugin {
                 debug_draw_track,
             ),
         );
+        app.add_systems(OnExit(PlayingState::Build), reset_building);
     }
 }
 
@@ -183,6 +184,10 @@ fn build_track_vis(
     }
 
     gizmos.circle_2d(pos, 5., Color::WHITE);
+}
+
+fn reset_building(mut builder: ResMut<TrackBuilder>) {
+    builder.is_dragging = false;
 }
 
 fn build_track(
@@ -382,8 +387,12 @@ fn bulldoze_track(
     s_camera: Single<(&Camera, &GlobalTransform), With<camera::MainCamera>>,
     r_mouse: Res<ButtonInput<MouseButton>>,
     mut q_segments: Query<(Entity, &mut TrackSegment)>,
+    q_interactions: Query<&Interaction, With<Node>>,
 ) {
     if !r_mouse.pressed(MouseButton::Left) {
+        return;
+    }
+    if q_interactions.iter().any(|interaction| *interaction != Interaction::None) {
         return;
     }
     let (camera, camera_transform) = *s_camera;
@@ -408,7 +417,11 @@ fn bulldoze_track(
 
         if let TrackConnection::Segment(next_seg_ent) = target_seg.end_node {
             let new_node = commands
-                .spawn(TrackNode::new_transform(target_seg.p3, target_seg.p2))
+                .spawn((
+                    TrackNode::new((target_seg.p2 - target_seg.p3).normalize_or_zero()),
+                    Transform::from_translation(target_seg.p3.extend(0.)),
+                    DespawnWhenMainMenu,
+                ))
                 .id();
             if let Ok((_, mut next_seg)) = q_segments.get_mut(next_seg_ent) {
                 if next_seg.start_node == TrackConnection::Segment(target_ent) {
@@ -422,7 +435,11 @@ fn bulldoze_track(
         }
         if let TrackConnection::Segment(prev_seg_ent) = target_seg.start_node {
             let new_node = commands
-                .spawn(TrackNode::new_transform(target_seg.p0, target_seg.p1))
+                .spawn((
+                    TrackNode::new((target_seg.p1 - target_seg.p0).normalize_or_zero()),
+                    Transform::from_translation(target_seg.p0.extend(0.)),
+                    DespawnWhenMainMenu,
+                ))
                 .id();
             if let Ok((_, mut prev_seg)) = q_segments.get_mut(prev_seg_ent) {
                 if prev_seg.start_node == TrackConnection::Segment(target_ent) {

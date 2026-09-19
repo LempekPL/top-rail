@@ -1,20 +1,16 @@
+use crate::save_load::{LoadGame, SaveGame};
 use crate::state_manager::{GameState, MenuUiState, PauseUiState};
-use bevy::feathers::FeathersPlugins;
 use bevy::feathers::containers::{subpane_body, subpane_header};
 use bevy::feathers::controls::FeathersButton;
-use bevy::feathers::dark_theme::create_dark_theme;
-use bevy::feathers::theme::{ThemedText, UiTheme};
+use bevy::feathers::theme::ThemedText;
 use bevy::input_focus::tab_navigation::TabGroup;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
-use crate::save_load::{LoadGame, SaveGame};
 
 pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(FeathersPlugins);
-        app.insert_resource(UiTheme(create_dark_theme()));
         app.add_systems(Startup, (setup_main_box, show_main_menu).chain());
         app.add_systems(OnEnter(MenuUiState::Main), show_main_menu);
         app.add_systems(OnEnter(MenuUiState::Settings), show_settings_menu);
@@ -36,7 +32,7 @@ fn setup_main_box(mut commands: Commands) {
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
         }
-        BackgroundColor(Color::Srgba(Srgba::new(0.0, 0.0, 0.0, 0.5)))
+        // BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5))
         MainBox
         TabGroup
     });
@@ -228,7 +224,3 @@ fn settings_menu(back_func: impl Scene) -> impl Scene {
         ]
     }
 }
-
-
-// TOR EMGOVE
-

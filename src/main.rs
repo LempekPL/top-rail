@@ -2,22 +2,22 @@
 
 mod camera;
 mod controls;
-mod menu;
+mod gui;
 mod railway;
+mod save_load;
 pub mod state_manager;
 mod util;
-mod save_load;
 
 use crate::camera::CameraPlugin;
 use crate::controls::ControlsPlugin;
-use crate::menu::MenuPlugin;
+use crate::gui::GuiPlugin;
 use crate::railway::RailwayPlugin;
+use crate::save_load::SaveLoadPlugin;
 use crate::state_manager::StateManagerPlugin;
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig};
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
-use crate::save_load::SaveLoadPlugin;
 
 fn main() {
     App::new()
@@ -44,7 +44,7 @@ fn main() {
                 },
             },
         })
-        .add_plugins((MenuPlugin, SaveLoadPlugin))
+        .add_plugins((GuiPlugin, SaveLoadPlugin))
         .add_plugins((RailwayPlugin, StateManagerPlugin, ControlsPlugin))
         .add_plugins(CameraPlugin)
         .add_plugins(FramepacePlugin)
