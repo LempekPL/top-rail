@@ -15,6 +15,8 @@ const SEGMENT_LENGTH: f32 = 100.0;
 const MIN_LENGTH_TO_BUILD: f32 = 20.0;
 const MIN_RADIUS: f32 = 100.0;
 const FINER_SEGMENT_RADIUS: f32 = 35.0;
+// todo: make it more reasonable in the future
+const MAX_DEPTH_SEARCH: usize = usize::MAX;
 const _: () = assert!(
     NEW_TRACK_SNAP_RADIUS + TRACK_SPACING < FINER_SEGMENT_RADIUS,
     "track snapping needs to be bigger to use finer snapping"
@@ -311,56 +313,83 @@ fn build_track_spawner(
         }
         _ => {}
     }
-    let segments;
-    if let SnapNode::Parallel { normal, .. } | SnapNode::Junction { normal, .. } =
-        builder.current_snap
+    let mut segments = Vec::new();
+    let mut parallel_success = false;
+
+    if let (
+        SnapNode::Parallel {
+            segment: start_segment,
+            side: start_side,
+            normal: start_normal,
+            pos: start_pos,
+        },
+        SnapNode::Parallel {
+            segment: end_segment,
+            side: end_side,
+            normal: end_normal,
+            pos: end_pos,
+        },
+    ) = (builder.start_snap.clone(), builder.current_snap.clone())
     {
-        let chord_dir = (p3 - p0).normalize_or_zero();
-        let mut track_dir_candidate = Vec2::new(normal.y, -normal.x);
-        if track_dir_candidate.dot(chord_dir) < 0. {
-            track_dir_candidate = -track_dir_candidate;
+        if let Some(path) = find_segment_path(start_segment, end_segment, &q_segments)
+            && are_on_same_side(&path, start_side, end_side, &q_segments)
+        {
+            
         }
-        let t0 = start_tangent.unwrap_or(chord_dir);
-        let mut tmp_seg = create_segmented_bezier(p0, t0, p3, track_dir_candidate, SEGMENT_LENGTH);
-        if matches!(validate_segments(&tmp_seg), ValidatedTrack::SegmentSharp) {
-            let tmp_seg2 =
-                create_segmented_bezier(p0, t0, p3, -track_dir_candidate, SEGMENT_LENGTH);
-            if !matches!(validate_segments(&tmp_seg2), ValidatedTrack::SegmentSharp) {
-                tmp_seg = tmp_seg2;
+    }
+
+    if !parallel_success {
+        if let SnapNode::Parallel { normal, .. } | SnapNode::Junction { normal, .. } =
+            builder.current_snap
+        {
+            let chord_dir = (p3 - p0).normalize_or_zero();
+            let mut track_dir_candidate = Vec2::new(normal.y, -normal.x);
+            if track_dir_candidate.dot(chord_dir) < 0. {
+                track_dir_candidate = -track_dir_candidate;
             }
-        }
-        segments = tmp_seg;
-    } else if let SnapNode::LoneNode { tangent, .. } = builder.current_snap {
-        let chord_dir = (p3 - p0).normalize_or_zero();
-        let t0 = start_tangent.unwrap_or(chord_dir);
-        segments = create_segmented_bezier(p0, t0, p3, -tangent, SEGMENT_LENGTH);
-    } else if let Some(tangent) = start_tangent {
-        let normal = start_normal.unwrap();
-        let chord = p3 - p0;
-        let d = chord.dot(normal);
-        let proj_dist = chord.dot(tangent);
-        if proj_dist < 0. {
-            // disallow curves >180deg
-            p3 = p0 + normal * d;
-        }
-        let dist_straight = d.abs();
-        let dist_45_pos = ((d - proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
-        let dist_45_neg = ((d + proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
-        if dist_straight < BUILD_SNAP_DISTANCE && proj_dist > 0. {
-            segments = create_straight(p0, p0 + tangent * proj_dist, SEGMENT_LENGTH);
-        } else if dist_45_pos < BUILD_SNAP_DISTANCE && proj_dist > 0. {
-            let snap_len = (proj_dist + d) * std::f32::consts::FRAC_1_SQRT_2;
-            let snap_dir = (tangent + normal).normalize();
-            segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
-        } else if dist_45_neg < BUILD_SNAP_DISTANCE && proj_dist > 0. {
-            let snap_len = (proj_dist - d) * std::f32::consts::FRAC_1_SQRT_2;
-            let snap_dir = (tangent - normal).normalize();
-            segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
+            let t0 = start_tangent.unwrap_or(chord_dir);
+            let mut tmp_seg =
+                create_segmented_bezier(p0, t0, p3, track_dir_candidate, SEGMENT_LENGTH);
+            if matches!(validate_segments(&tmp_seg), ValidatedTrack::SegmentSharp) {
+                let tmp_seg2 =
+                    create_segmented_bezier(p0, t0, p3, -track_dir_candidate, SEGMENT_LENGTH);
+                if !matches!(validate_segments(&tmp_seg2), ValidatedTrack::SegmentSharp) {
+                    tmp_seg = tmp_seg2;
+                }
+            }
+            segments = tmp_seg;
+        } else if let SnapNode::LoneNode { tangent, .. } = builder.current_snap {
+            let chord_dir = (p3 - p0).normalize_or_zero();
+            let t0 = start_tangent.unwrap_or(chord_dir);
+            segments = create_segmented_bezier(p0, t0, p3, -tangent, SEGMENT_LENGTH);
+        } else if let Some(tangent) = start_tangent {
+            let normal = start_normal.unwrap();
+            let chord = p3 - p0;
+            let d = chord.dot(normal);
+            let proj_dist = chord.dot(tangent);
+            if proj_dist < 0. {
+                // disallow curves >180deg
+                p3 = p0 + normal * d;
+            }
+            let dist_straight = d.abs();
+            let dist_45_pos = ((d - proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
+            let dist_45_neg = ((d + proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
+            if dist_straight < BUILD_SNAP_DISTANCE && proj_dist > 0. {
+                segments = create_straight(p0, p0 + tangent * proj_dist, SEGMENT_LENGTH);
+            } else if dist_45_pos < BUILD_SNAP_DISTANCE && proj_dist > 0. {
+                let snap_len = (proj_dist + d) * std::f32::consts::FRAC_1_SQRT_2;
+                let snap_dir = (tangent + normal).normalize();
+                segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
+            } else if dist_45_neg < BUILD_SNAP_DISTANCE && proj_dist > 0. {
+                let snap_len = (proj_dist - d) * std::f32::consts::FRAC_1_SQRT_2;
+                let snap_dir = (tangent - normal).normalize();
+                segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
+            } else {
+                segments = create_arc(p0, tangent, p3, SEGMENT_LENGTH);
+            }
         } else {
-            segments = create_arc(p0, tangent, p3, SEGMENT_LENGTH);
+            segments = create_straight(p0, p3, SEGMENT_LENGTH);
         }
-    } else {
-        segments = create_straight(p0, p3, SEGMENT_LENGTH);
     }
 
     let validation = validate_segments(&segments);
@@ -580,6 +609,74 @@ fn find_closest_segment(
     }
 
     best_match
+}
+
+fn find_segment_path(
+    start: Entity,
+    end: Entity,
+    q_segments: &Query<(Entity, &mut TrackSegment)>,
+) -> Option<Vec<Entity>> {
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(vec![start]);
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(start);
+
+    while let Some(path) = queue.pop_front() {
+        let curr = *path.last().unwrap();
+        if curr == end {
+            return Some(path);
+        }
+        if path.len() >= MAX_DEPTH_SEARCH {
+            continue;
+        }
+        if let Ok((_, seg)) = q_segments.get(curr) {
+            for conn in [&seg.start_node, &seg.end_node] {
+                if let TrackConnection::Segment(next_ent) = conn {
+                    if !visited.contains(next_ent) {
+                        visited.insert(*next_ent);
+                        let mut new_path = path.clone();
+                        new_path.push(*next_ent);
+                        queue.push_back(new_path);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn are_on_same_side(
+    path: &[Entity],
+    start_side: i8,
+    end_side: i8,
+    q_segments: &Query<(Entity, &mut TrackSegment)>,
+) -> bool {
+    if path.is_empty() {
+        return start_side == end_side;
+    }
+
+    let mut current_orientation = 1;
+
+    for i in 0..(path.len() - 1) {
+        let curr_ent = path[i];
+        let next_ent = path[i + 1];
+
+        let Ok((_, curr_seg)) = q_segments.get(curr_ent) else {
+            continue;
+        };
+        let Ok((_, next_seg)) = q_segments.get(next_ent) else {
+            continue;
+        };
+
+        let exited_end = curr_seg.end_node == TrackConnection::Segment(next_ent);
+        let entered_end = next_seg.end_node == TrackConnection::Segment(curr_ent);
+
+        if exited_end == entered_end {
+            current_orientation *= -1;
+        }
+    }
+
+    (start_side * current_orientation) == end_side
 }
 
 enum ValidatedTrack {

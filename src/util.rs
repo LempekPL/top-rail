@@ -19,6 +19,8 @@ pub mod bezier {
         let u = 1.0 - t;
         6.0 * u * (p2 - p1 * 2.0 + p0) + 6.0 * t * (p3 - p2 * 2.0 + p1)
     }
+
+    // pub fn offset(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32, offset: f32) -> Vec2 {}
 }
 
 pub fn create_straight(
