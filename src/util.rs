@@ -37,17 +37,19 @@ pub fn create_straight(
     let dir = line / dist;
     let num_splits = (dist / segment_length).ceil().max(1.0) as usize;
     let step_len = dist / num_splits as f32;
-    let mut segments = Vec::new();
+    let mut segments = Vec::with_capacity(num_splits);
+    let mut last_q3 = p_start;
     for i in 0..num_splits {
-        let q0 = p_start + dir * (i as f32 * step_len);
+        let q0 = last_q3;
         let q3 = if i == num_splits - 1 {
-            // make sure it ends on point
             p_end
         } else {
             p_start + dir * ((i + 1) as f32 * step_len)
         };
-        segments.push((q0, q0.lerp(q3, 0.33), q0.lerp(q3, 0.66), q3));
+        segments.push((q0, q0.lerp(q3, 1. / 3.), q0.lerp(q3, 2. / 3.), q3));
+        last_q3 = q3;
     }
+
     segments
 }
 
@@ -60,6 +62,11 @@ pub fn create_arc(
     let normal = Vec2::new(-start_tangent.y, start_tangent.x);
     let chord = p_end - p_start;
     let d = chord.dot(normal);
+    
+    // if chord and tangent are very close just make it straight
+    if d.abs() < 0.00001 {
+        return create_straight(p_start, p_end, segment_length);
+    }
 
     let turn_dir = d.signum();
     let radius = chord.length_squared() / (2.0 * d.abs());
@@ -80,22 +87,33 @@ pub fn create_arc(
     let step = sweep_angle / num_splits as f32;
     let k = (4.0 / 3.0) * (step.abs() / 4.0).tan();
 
-    let mut segments = Vec::new();
+    let mut segments = Vec::with_capacity(num_splits);
     let mut current_angle = start_angle;
-    for _ in 0..num_splits {
-        let next_angle = current_angle + step;
+    let mut last_q3 = p_start;
+    for i in 0..num_splits {
+        let is_last = i == num_splits - 1;
+        let next_angle = if is_last {
+            end_angle
+        } else {
+            start_angle + (i + 1) as f32 * step
+        };
 
         let t0 = Vec2::new(-current_angle.sin(), current_angle.cos()) * turn_dir;
         let t1 = Vec2::new(-next_angle.sin(), next_angle.cos()) * turn_dir;
 
-        let q0 = center + Vec2::from_angle(current_angle) * radius;
-        let q3 = center + Vec2::from_angle(next_angle) * radius;
+        let q0 = last_q3;
+        let q3 = if is_last {
+            p_end
+        } else {
+            center + Vec2::from_angle(next_angle) * radius
+        };
 
         let q1 = q0 + t0 * (k * radius);
         let q2 = q3 - t1 * (k * radius);
 
         segments.push((q0, q1, q2, q3));
         current_angle = next_angle;
+        last_q3 = q3;
     }
     segments
 }
@@ -117,17 +135,26 @@ pub fn create_segmented_bezier(
     let step = 1.0 / num_splits as f32;
 
     let mut segments = Vec::new();
+    let mut last_q3 = p0;
     for i in 0..num_splits {
-        let ta = i as f32 * step;
-        let tb = (i + 1) as f32 * step;
+        let is_last = i == num_splits - 1;
 
-        let q0 = bezier::eval(p0, p1, p2, p3, ta);
-        let q3 = bezier::eval(p0, p1, p2, p3, tb);
+        let ta = i as f32 * step;
+        let tb = if is_last { 1.0 } else { (i + 1) as f32 * step };
+
+        let q0 = last_q3;
+        let q3 = if is_last {
+            p3
+        } else {
+            bezier::eval(p0, p1, p2, p3, tb)
+        };
 
         let q1 = q0 + bezier::derivative(p0, p1, p2, p3, ta) * (step / 3.0);
         let q2 = q3 - bezier::derivative(p0, p1, p2, p3, tb) * (step / 3.0);
 
         segments.push((q0, q1, q2, q3));
+
+        last_q3 = q3;
     }
     segments
 }

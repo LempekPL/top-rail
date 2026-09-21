@@ -58,7 +58,7 @@ pub enum PlayingState {
     Drive,
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Clone)]
 pub struct DespawnWhenMainMenu;
 
 fn despawn_when_main_menu(

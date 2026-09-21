@@ -21,6 +21,7 @@ pub struct Keymap {
     pub build: KeyCode,
     pub bulldoze: KeyCode,
     pub not_snap: KeyCode,
+    pub debug: KeyCode,
 }
 
 impl Default for Keymap {
@@ -34,6 +35,7 @@ impl Default for Keymap {
             build: KeyCode::Digit1,
             bulldoze: KeyCode::KeyB,
             not_snap: KeyCode::KeyC,
+            debug: KeyCode::F3,
         }
     }
 }
