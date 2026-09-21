@@ -10,6 +10,7 @@ use std::cmp::PartialEq;
 #[derive(Default)]
 pub struct TrackPlugin;
 
+// todo: better consts
 const TRACK_SPACING: f32 = 20.0;
 const NEW_TRACK_SNAP_RADIUS: f32 = 10.0;
 const BUILD_SNAP_DISTANCE: f32 = 15.0;
@@ -654,7 +655,7 @@ fn bulldoze_track(
                     }
                 }
             }
-            _ => todo!()
+            _ => todo!(),
         }
     }
 }
