@@ -71,14 +71,16 @@ fn build_track_mesh(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> Mesh {
     let rail_offset = 7.0;
     let rail_size = 1.0;
 
-    let mut prev_p = bezier::eval(p0, p1, p2, p3, 0.0);
-    let prev_t = bezier::derivative(p0, p1, p2, p3, 0.0).normalize_or_zero();
+    let segment = bezier::build_segment(p0, p1, p2, p3);
+
+    let mut prev_p = segment.position(0.);
+    let prev_t = segment.velocity(0.).normalize_or_zero();
     let mut prev_n = Vec2::new(-prev_t.y, prev_t.x);
 
     for i in 1..=segments {
         let t = i as f32 / segments as f32;
-        let curr_p = bezier::eval(p0, p1, p2, p3, t);
-        let curr_t = bezier::derivative(p0, p1, p2, p3, t).normalize_or_zero();
+        let curr_p = segment.position(t);
+        let curr_t = segment.velocity(t).normalize_or_zero();
         let curr_n = Vec2::new(-curr_t.y, curr_t.x);
 
         // ballast
@@ -127,8 +129,8 @@ fn build_track_mesh(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> Mesh {
     let sleeper_length = 1.5;
     for i in 0..=num_sleepers {
         let t = i as f32 / num_sleepers.max(1) as f32;
-        let p = bezier::eval(p0, p1, p2, p3, t);
-        let d = bezier::derivative(p0, p1, p2, p3, t).normalize_or_zero();
+        let p = segment.position(t);
+        let d = segment.velocity(t).normalize_or_zero();
         let n = Vec2::new(-d.y, d.x);
 
         let s_front = p + d * sleeper_length;

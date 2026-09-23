@@ -401,6 +401,17 @@ impl<'w, 's> Track<'w, 's> {
         })
     }
 
+    pub fn iter_curves(&self) -> impl Iterator<Item = (Entity, CubicSegment<Vec2>)> {
+        self.segments.iter().filter_map(move |(seg_ent, segment)| {
+            let (_, start) = self.nodes.get(segment.start_node).ok()?;
+            let (_, end) = self.nodes.get(segment.end_node).ok()?;
+            Some((
+                seg_ent,
+                bezier::build_segment(start.pos(), segment.p1, segment.p2, end.pos()),
+            ))
+        })
+    }
+
     pub fn iter_segments(&self) -> impl Iterator<Item = &TrackSegment> {
         self.segments.iter().map(move |(_, segment)| segment)
     }
@@ -492,18 +503,12 @@ fn build_track_snapper(
         let mut best_curve_point = None;
         let mut min_dist_to_curve = f32::MAX;
 
-        for (entity, track_segment, start_node, end_node) in track.iter_track() {
+        for (entity, segment) in track.iter_curves() {
             let mut is_close = false;
             let test_segments = 10;
             for i in 0..=test_segments {
                 let t = i as f32 / test_segments as f32;
-                let current_point = bezier::eval(
-                    start_node.pos(),
-                    track_segment.p1,
-                    track_segment.p2,
-                    end_node.pos(),
-                    t,
-                );
+                let current_point = segment.position(t);
                 if cursor_world_pos.distance(current_point) < FINER_SEGMENT_RADIUS {
                     is_close = true;
                     break;
@@ -514,27 +519,13 @@ fn build_track_snapper(
                 let fine_segments = 100;
                 for i in 0..=fine_segments {
                     let t = i as f32 / fine_segments as f32;
-                    let current_point = bezier::eval(
-                        start_node.pos(),
-                        track_segment.p1,
-                        track_segment.p2,
-                        end_node.pos(),
-                        t,
-                    );
+                    let current_point = segment.position(t);
 
                     let dist = cursor_world_pos.distance(current_point);
 
                     if dist < min_dist_to_curve {
                         min_dist_to_curve = dist;
-                        let tangent = bezier::derivative(
-                            start_node.pos(),
-                            track_segment.p1,
-                            track_segment.p2,
-                            end_node.pos(),
-                            t,
-                        )
-                        .normalize_or_zero();
-
+                        let tangent = segment.velocity(t).normalize_or_zero();
                         best_curve_point = Some((entity, current_point, tangent));
                     }
                 }
@@ -919,9 +910,10 @@ fn bulldoze_track(
     let mut closest_dist = 15.0;
     const SAMPLES: usize = 10;
     for (seg_ent, segment, start_node, end_node) in track.as_readonly().iter_track() {
+        let curve = bezier::build_segment(start_node.pos(), segment.p1, segment.p2, end_node.pos());
         for i in 0..=SAMPLES {
             let t = i as f32 / SAMPLES as f32;
-            let point = bezier::eval(start_node.pos(), segment.p1, segment.p2, end_node.pos(), t);
+            let point = curve.position(t);
             let dist = point.distance(cursor_world_pos);
             if dist < closest_dist {
                 closest_dist = dist;
@@ -1118,10 +1110,11 @@ fn validate_segments(segments: &Vec<(Vec2, Vec2, Vec2, Vec2)>) -> ValidatedTrack
 }
 
 pub fn is_segment_valid(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, min_radius: f32) -> bool {
+    let segment = bezier::build_segment(p0, p1, p2, p3);
     for i in 0..=10 {
         let t = i as f32 / 10.0;
-        let d1 = bezier::derivative(p0, p1, p2, p3, t);
-        let d2 = bezier::second_derivative(p0, p1, p2, p3, t);
+        let d1 = segment.velocity(t);
+        let d2 = segment.acceleration(t);
         let cross = (d1.x * d2.y - d1.y * d2.x).abs();
         let denom = d1.length_squared().powf(1.5);
         if denom > 0.0001 {

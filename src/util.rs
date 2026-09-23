@@ -4,29 +4,21 @@ use bevy::prelude::{CubicBezier, CubicGenerator, Gizmos};
 
 pub mod bezier {
     use bevy::math::Vec2;
+    use bevy::math::cubic_splines::CubicSegment;
+    use bevy::prelude::CubicBezier;
 
-    pub fn eval(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32) -> Vec2 {
-        let u = 1.0 - t;
-        p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t)
+    #[inline]
+    pub fn build_segment(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> CubicSegment<Vec2> {
+        CubicSegment::new_bezier([p0, p1, p2, p3])
     }
 
-    pub fn derivative(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32) -> Vec2 {
-        let u = 1.0 - t;
-        3.0 * u * u * (p1 - p0) + 6.0 * u * t * (p2 - p1) + 3.0 * t * t * (p3 - p2)
-    }
-
-    pub fn second_derivative(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32) -> Vec2 {
-        let u = 1.0 - t;
-        6.0 * u * (p2 - p1 * 2.0 + p0) + 6.0 * t * (p3 - p2 * 2.0 + p1)
-    }
-
-    pub fn find_t_from_pos(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, pos: Vec2) -> f32 {
+    pub fn find_t_from_pos(segment: &CubicSegment<Vec2>, pos: Vec2) -> f32 {
         let mut t = 0.5;
         let iterations = 8;
         for _ in 0..iterations {
-            let current_pos = eval(p0, p1, p2, p3, t);
-            let d1 = derivative(p0, p1, p2, p3, t);
-            let d2 = second_derivative(p0, p1, p2, p3, t);
+            let current_pos = segment.position(t);
+            let d1 = segment.velocity(t);
+            let d2 = segment.acceleration(t);
             let delta = current_pos - pos;
             let f = delta.dot(d1);
             let f_prime = d1.dot(d1) + delta.dot(d2);
@@ -64,7 +56,8 @@ pub mod bezier {
         p3: Vec2,
         pos: Vec2,
     ) -> ((Vec2, Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2, Vec2)) {
-        let t = find_t_from_pos(p0, p1, p2, p3, pos);
+        let segment = build_segment(p0, p1, p2, p3);
+        let t = find_t_from_pos(&segment, pos);
         split_at_t(p0, p1, p2, p3, t)
     }
 }
@@ -182,6 +175,7 @@ pub fn create_segmented_bezier(
 
     let mut segments = Vec::new();
     let mut last_q3 = p0;
+    let segment = bezier::build_segment(p0, p1, p2, p3);
     for i in 0..num_splits {
         let is_last = i == num_splits - 1;
 
@@ -189,14 +183,10 @@ pub fn create_segmented_bezier(
         let tb = if is_last { 1.0 } else { (i + 1) as f32 * step };
 
         let q0 = last_q3;
-        let q3 = if is_last {
-            p3
-        } else {
-            bezier::eval(p0, p1, p2, p3, tb)
-        };
+        let q3 = if is_last { p3 } else { segment.position(tb) };
 
-        let q1 = q0 + bezier::derivative(p0, p1, p2, p3, ta) * (step / 3.0);
-        let q2 = q3 - bezier::derivative(p0, p1, p2, p3, tb) * (step / 3.0);
+        let q1 = q0 + segment.velocity(ta) * (step / 3.0);
+        let q2 = q3 - segment.velocity(tb) * (step / 3.0);
 
         segments.push((q0, q1, q2, q3));
 
@@ -216,12 +206,4 @@ pub fn draw_bezier(gizmos: &mut Gizmos, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, 
         (0..=segments).map(|n| n as f32 / segments as f32),
         color,
     );
-
-    // let mut prev_point = p0;
-    // for i in 1..=segments {
-    //     let t = i as f32 / segments as f32;
-    //     let current_point = bezier::eval(p0, p1, p2, p3, t);
-    //     gizmos.line_2d(prev_point, current_point, color);
-    //     prev_point = current_point;
-    // }
 }
