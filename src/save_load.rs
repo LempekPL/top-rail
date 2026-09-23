@@ -117,6 +117,7 @@ fn save_game_system(mut ev_save: MessageReader<SaveGame>, track: Track) {
                     });
                 }
                 TrackNode::Junction { .. } => todo!(),
+                TrackNode::Crossing { .. } => todo!(),
             }
         }
 

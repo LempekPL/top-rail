@@ -14,7 +14,7 @@ pub struct TrackPlugin;
 const TRACK_SPACING: f32 = 20.0;
 const NEW_TRACK_SNAP_RADIUS: f32 = 10.0;
 const BUILD_SNAP_DISTANCE: f32 = 15.0;
-const SEGMENT_LENGTH: f32 = 100.0;
+const SEGMENT_LENGTH: f32 = 160.0;
 const MIN_LENGTH_TO_BUILD: f32 = 20.0;
 const MIN_RADIUS: f32 = 100.0;
 const FINER_SEGMENT_RADIUS: f32 = 35.0;
@@ -24,6 +24,7 @@ const _: () = assert!(
     NEW_TRACK_SNAP_RADIUS + TRACK_SPACING < FINER_SEGMENT_RADIUS,
     "track snapping needs to be bigger to use finer snapping"
 );
+const SIDE_CHANGE_RADIUS: f32 = 10.0;
 
 #[derive(Resource, Default)]
 struct TrackDebug {
@@ -126,7 +127,7 @@ pub enum SnapNode {
         normal: Vec2,
         side: i8,
     },
-    Junction {
+    NewJunction {
         segment: Entity,
         pos: Vec2,
         normal: Vec2,
@@ -141,7 +142,7 @@ impl SnapNode {
             | SnapNode::DeadEnd { pos, .. }
             | SnapNode::LoneNode { pos, .. }
             | SnapNode::Parallel { pos, .. }
-            | SnapNode::Junction { pos, .. } => pos.clone(),
+            | SnapNode::NewJunction { pos, .. } => pos.clone(),
         }
     }
 }
@@ -206,8 +207,13 @@ pub enum TrackNode {
     Junction {
         pos: Vec2,
         normal: Vec2,
-        outgoing_tracks: Vec<Entity>,
-        active_track_index: usize,
+        tracks: [Entity; 3],
+        active_track_index: u8,
+    },
+    Crossing {
+        pos: Vec2,
+        normal: Vec2,
+        tracks: [Entity; 4],
     },
 }
 
@@ -234,19 +240,137 @@ impl TrackNode {
         )
     }
 
-    pub fn make_cont(&mut self, track: Entity) {
-        if let TrackNode::DeadEnd {
-            pos,
-            tangent,
-            track: old_track,
-        } = *self
-        {
-            let normal = Vec2::new(-tangent.y, tangent.x);
-            *self = TrackNode::Continuation {
+    pub fn bundle_junc(pos: Vec2, normal: Vec2, tracks: [Entity; 3]) -> impl Bundle {
+        (
+            Self::Junction {
                 pos,
                 normal,
-                tracks: [old_track, track],
-            };
+                tracks,
+                active_track_index: 0,
+            },
+            DespawnWhenMainMenu,
+        )
+    }
+
+    pub fn add_track(&mut self, new_track: Entity) {
+        match self {
+            TrackNode::DeadEnd {
+                pos,
+                tangent,
+                track,
+            } => {
+                let normal = Vec2::new(-tangent.y, tangent.x);
+                *self = TrackNode::Continuation {
+                    pos: *pos,
+                    normal,
+                    tracks: [*track, new_track],
+                };
+            }
+            TrackNode::Continuation {
+                pos,
+                normal,
+                tracks,
+            } => {
+                *self = TrackNode::Junction {
+                    pos: *pos,
+                    normal: *normal,
+                    tracks: [tracks[0], tracks[1], new_track],
+                    active_track_index: 0,
+                };
+            }
+            TrackNode::Junction {
+                pos,
+                normal,
+                tracks,
+                ..
+            } => {
+                *self = TrackNode::Crossing {
+                    pos: *pos,
+                    normal: *normal,
+                    tracks: [tracks[0], tracks[1], tracks[2], new_track],
+                };
+            }
+            TrackNode::Crossing { .. } => {}
+        }
+    }
+
+    pub fn remove_track(&mut self, old_track: Entity) {
+        match self {
+            TrackNode::DeadEnd { .. } => {}
+            TrackNode::Continuation {
+                pos,
+                normal,
+                tracks,
+            } => {
+                let tangent = Vec2::new(normal.y, -normal.x);
+                let track = if tracks[0] == old_track {
+                    tracks[1]
+                } else {
+                    tracks[0]
+                };
+                *self = TrackNode::DeadEnd {
+                    pos: *pos,
+                    tangent,
+                    track,
+                };
+            }
+            TrackNode::Junction {
+                pos,
+                normal,
+                tracks,
+                ..
+            } => {
+                let mut it = tracks.iter().copied().filter(|&t| t != old_track);
+                *self = TrackNode::Continuation {
+                    pos: *pos,
+                    normal: *normal,
+                    tracks: [it.next().unwrap(), it.next().unwrap()],
+                };
+            }
+            TrackNode::Crossing {
+                pos,
+                normal,
+                tracks,
+            } => {
+                let mut it = tracks.iter().copied().filter(|&t| t != old_track);
+                *self = TrackNode::Junction {
+                    pos: *pos,
+                    normal: *normal,
+                    tracks: [it.next().unwrap(), it.next().unwrap(), it.next().unwrap()],
+                    active_track_index: 0,
+                };
+            }
+        }
+    }
+
+    pub fn replace_track(&mut self, old_segment: Entity, new_segment: Entity) {
+        match self {
+            TrackNode::DeadEnd { track, .. } => {
+                if *track == old_segment {
+                    *track = new_segment;
+                }
+            }
+            TrackNode::Continuation { tracks, .. } => {
+                for track in tracks.iter_mut() {
+                    if *track == old_segment {
+                        *track = new_segment;
+                    }
+                }
+            }
+            TrackNode::Junction { tracks, .. } => {
+                for track in tracks.iter_mut() {
+                    if *track == old_segment {
+                        *track = new_segment;
+                    }
+                }
+            }
+            TrackNode::Crossing { tracks, .. } => {
+                for track in tracks.iter_mut() {
+                    if *track == old_segment {
+                        *track = new_segment;
+                    }
+                }
+            }
         }
     }
 
@@ -254,7 +378,8 @@ impl TrackNode {
         match self {
             TrackNode::DeadEnd { pos, .. }
             | TrackNode::Continuation { pos, .. }
-            | TrackNode::Junction { pos, .. } => pos.clone(),
+            | TrackNode::Junction { pos, .. }
+            | TrackNode::Crossing { pos, .. } => pos.clone(),
         }
     }
 }
@@ -283,6 +408,14 @@ impl<'w, 's> Track<'w, 's> {
     pub fn iter_nodes(&self) -> impl Iterator<Item = &TrackNode> {
         self.nodes.iter().map(move |(_, node)| node)
     }
+
+    pub fn get_track(&self, seg_ent: Entity) -> Option<(&TrackSegment, &TrackNode, &TrackNode)> {
+        self.segments.get(seg_ent).map_or(None, |(_, segment)| {
+            let (_, start) = self.nodes.get(segment.start_node).ok()?;
+            let (_, end) = self.nodes.get(segment.end_node).ok()?;
+            Some((segment, start, end))
+        })
+    }
 }
 
 #[derive(SystemParam)]
@@ -297,6 +430,23 @@ impl<'w, 's> TrackMut<'w, 's> {
             segments: self.segments.as_readonly(),
             nodes: self.nodes.as_readonly(),
         }
+    }
+
+    pub fn get_track_mut(
+        &mut self,
+        seg_ent: Entity,
+    ) -> Option<(
+        Mut<'_, TrackSegment>,
+        Mut<'_, TrackNode>,
+        Mut<'_, TrackNode>,
+    )> {
+        let (_, segment) = self.segments.get_mut(seg_ent).ok()?;
+        let start_ent = segment.start_node;
+        let end_ent = segment.end_node;
+        let [(_, start_node), (_, end_node)] =
+            self.nodes.get_many_mut([start_ent, end_ent]).ok()?;
+
+        Some((segment, start_node, end_node))
     }
 }
 
@@ -338,65 +488,93 @@ fn build_track_snapper(
         }
     }
 
-    // if matches!(snap, SnapNode::NoSnap { .. }) {
-    //     let mut min_snap_dist = NEW_TRACK_SNAP_RADIUS;
-    //     for (entity, ts) in q_segments.iter() {
-    //         let mut is_close = false;
-    //         let test_segments = 10;
-    //         for i in 0..=test_segments {
-    //             let t = i as f32 / test_segments as f32;
-    //             let current_point = bezier::eval(ts.p0, ts.p1, ts.p2, ts.p3, t);
-    //             if cursor_world_pos.distance(current_point) < FINER_SEGMENT_RADIUS {
-    //                 is_close = true;
-    //                 break;
-    //             }
-    //         }
-    //         if is_close {
-    //             let fine_segments = 100;
-    //             for i in 0..=fine_segments {
-    //                 let t = i as f32 / fine_segments as f32;
-    //                 let current_point = bezier::eval(ts.p0, ts.p1, ts.p2, ts.p3, t);
-    //                 let tangent =
-    //                     bezier::derivative(ts.p0, ts.p1, ts.p2, ts.p3, t).normalize_or_zero();
-    //                 if tangent == Vec2::ZERO {
-    //                     continue;
-    //                 }
-    //                 let normal = Vec2::new(-tangent.y, tangent.x);
-    //                 let dist_center = cursor_world_pos.distance(current_point);
-    //                 if dist_center < min_snap_dist {
-    //                     min_snap_dist = dist_center;
-    //                     snap = SnapNode::Junction {
-    //                         pos: current_point,
-    //                         segment: entity,
-    //                         normal,
-    //                     };
-    //                 }
-    //                 let snap_left = current_point + normal * TRACK_SPACING;
-    //                 let dist_left = cursor_world_pos.distance(snap_left);
-    //                 if dist_left < min_snap_dist {
-    //                     min_snap_dist = dist_left;
-    //                     snap = SnapNode::Parallel {
-    //                         pos: snap_left,
-    //                         segment: entity,
-    //                         normal,
-    //                         side: 1,
-    //                     };
-    //                 }
-    //                 let snap_right = current_point - normal * TRACK_SPACING;
-    //                 let dist_right = cursor_world_pos.distance(snap_right);
-    //                 if dist_right < min_snap_dist {
-    //                     min_snap_dist = dist_right;
-    //                     snap = SnapNode::Parallel {
-    //                         pos: snap_right,
-    //                         segment: entity,
-    //                         normal,
-    //                         side: -1,
-    //                     };
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
+    if matches!(snap, SnapNode::NoSnap { .. }) {
+        let mut best_curve_point = None;
+        let mut min_dist_to_curve = f32::MAX;
+
+        for (entity, track_segment, start_node, end_node) in track.iter_track() {
+            let mut is_close = false;
+            let test_segments = 10;
+            for i in 0..=test_segments {
+                let t = i as f32 / test_segments as f32;
+                let current_point = bezier::eval(
+                    start_node.pos(),
+                    track_segment.p1,
+                    track_segment.p2,
+                    end_node.pos(),
+                    t,
+                );
+                if cursor_world_pos.distance(current_point) < FINER_SEGMENT_RADIUS {
+                    is_close = true;
+                    break;
+                }
+            }
+
+            if is_close {
+                let fine_segments = 100;
+                for i in 0..=fine_segments {
+                    let t = i as f32 / fine_segments as f32;
+                    let current_point = bezier::eval(
+                        start_node.pos(),
+                        track_segment.p1,
+                        track_segment.p2,
+                        end_node.pos(),
+                        t,
+                    );
+
+                    let dist = cursor_world_pos.distance(current_point);
+
+                    if dist < min_dist_to_curve {
+                        min_dist_to_curve = dist;
+                        let tangent = bezier::derivative(
+                            start_node.pos(),
+                            track_segment.p1,
+                            track_segment.p2,
+                            end_node.pos(),
+                            t,
+                        )
+                        .normalize_or_zero();
+
+                        best_curve_point = Some((entity, current_point, tangent));
+                    }
+                }
+            }
+        }
+
+        if let Some((entity, current_point, tangent)) = best_curve_point {
+            if tangent != Vec2::ZERO {
+                let normal = Vec2::new(-tangent.y, tangent.x);
+                let snap_left = current_point + normal * TRACK_SPACING;
+                let snap_right = current_point - normal * TRACK_SPACING;
+
+                let dist_center = min_dist_to_curve;
+                let dist_left = cursor_world_pos.distance(snap_left);
+                let dist_right = cursor_world_pos.distance(snap_right);
+
+                if dist_center < NEW_TRACK_SNAP_RADIUS {
+                    snap = SnapNode::NewJunction {
+                        pos: current_point,
+                        segment: entity,
+                        normal,
+                    };
+                } else if dist_left < NEW_TRACK_SNAP_RADIUS {
+                    snap = SnapNode::Parallel {
+                        pos: snap_left,
+                        segment: entity,
+                        normal,
+                        side: 1,
+                    };
+                } else if dist_right < NEW_TRACK_SNAP_RADIUS {
+                    snap = SnapNode::Parallel {
+                        pos: snap_right,
+                        segment: entity,
+                        normal,
+                        side: -1,
+                    };
+                }
+            }
+        }
+    }
 
     gizmos.circle_2d(snap.pos(), 5., Color::WHITE);
     if r_mouse.just_pressed(MouseButton::Left) {
@@ -426,12 +604,38 @@ fn build_track_spawner(
     let mut start_tangent = None;
     match builder.start_snap {
         SnapNode::DeadEnd { tangent, .. } => start_tangent = Some(tangent),
+        SnapNode::NewJunction { normal, .. } | SnapNode::Parallel { normal, .. } => {
+            let tangent = Vec2::new(normal.y, -normal.x);
+            if p0.distance(p3) < SIDE_CHANGE_RADIUS {
+                if (p0 - p3).dot(tangent) > 0.0 {
+                    builder.drag_dir = 1;
+                } else {
+                    builder.drag_dir = -1;
+                }
+            }
+            if builder.drag_dir == -1 {
+                start_tangent = Some(tangent);
+            } else {
+                start_tangent = Some(-tangent);
+            }
+        }
         _ => {}
     }
 
     let mut segments = Vec::new();
 
-    if let SnapNode::DeadEnd { tangent, .. } = builder.current_snap {
+    if let SnapNode::Parallel { normal, .. } | SnapNode::NewJunction { normal, .. } =
+        builder.current_snap
+    {
+        let mut tangent = Vec2::new(normal.y, -normal.x);
+        let chord = p3 - p0;
+        let chord_dir = chord.normalize_or_zero();
+        if chord.dot(tangent) < 0.0 {
+            tangent = -tangent;
+        }
+        let t0 = start_tangent.unwrap_or(chord_dir);
+        segments = create_segmented_bezier(p0, t0, p3, tangent, SEGMENT_LENGTH);
+    } else if let SnapNode::DeadEnd { tangent, .. } = builder.current_snap {
         let chord_dir = (p3 - p0).normalize_or_zero();
         let t0 = start_tangent.unwrap_or(chord_dir);
         segments = create_segmented_bezier(p0, t0, p3, -tangent, SEGMENT_LENGTH);
@@ -464,6 +668,31 @@ fn build_track_spawner(
         segments = create_straight(p0, p3, SEGMENT_LENGTH);
     }
 
+    let clearance = TRACK_SPACING * 2.5;
+
+    if matches!(builder.start_snap, SnapNode::NewJunction { .. }) && !segments.is_empty() {
+        let (q0, q1, q2, q3) = segments[0];
+        let dist = q0.distance(q3);
+        if dist > clearance + MIN_LENGTH_TO_BUILD {
+            let t = clearance / dist;
+            let (s1, s2) = bezier::split_at_t(q0, q1, q2, q3, t);
+            segments[0] = s2;
+            segments.insert(0, s1);
+        }
+    }
+
+    if matches!(builder.current_snap, SnapNode::NewJunction { .. }) && !segments.is_empty() {
+        let last_idx = segments.len() - 1;
+        let (q0, q1, q2, q3) = segments[last_idx];
+        let dist = q0.distance(q3);
+        if dist > clearance + MIN_LENGTH_TO_BUILD {
+            let t = (dist - clearance) / dist;
+            let (s1, s2) = bezier::split_at_t(q0, q1, q2, q3, t);
+            segments[last_idx] = s1;
+            segments.push(s2);
+        }
+    }
+
     let validation = validate_segments(&segments);
 
     if validation.drawable() {
@@ -489,9 +718,62 @@ fn build_track_spawner(
             segment_entities.push(commands.spawn_empty().id());
         }
 
-        let start_node_ent = if let SnapNode::DeadEnd { node, .. } = builder.start_snap {
+        let start_node_ent = if let SnapNode::NewJunction {
+            segment: ent_seg,
+            pos,
+            normal,
+        } = builder.start_snap
+        {
+            let Some((track_segment, mut start_n, mut end_n)) = track.get_track_mut(ent_seg) else {
+                return;
+            };
+
+            if start_n.pos().distance(pos) < MIN_LENGTH_TO_BUILD {
+                start_n.add_track(segment_entities[0]);
+                track_segment.start_node
+            } else if end_n.pos().distance(pos) < MIN_LENGTH_TO_BUILD {
+                end_n.add_track(segment_entities[0]);
+                track_segment.end_node
+            } else {
+                let (s1, s2) = bezier::split_at_pos(
+                    start_n.pos(),
+                    track_segment.p1,
+                    track_segment.p2,
+                    end_n.pos(),
+                    pos,
+                );
+                commands.entity(ent_seg).despawn();
+
+                let new_ts1 = commands.spawn_empty().id();
+                start_n.replace_track(ent_seg, new_ts1);
+                let new_ts2 = commands.spawn_empty().id();
+                end_n.replace_track(ent_seg, new_ts2);
+
+                let new_junction = commands
+                    .spawn(TrackNode::bundle_junc(
+                        pos,
+                        normal,
+                        [new_ts1, new_ts2, segment_entities[0]],
+                    ))
+                    .id();
+
+                commands.entity(new_ts1).insert(TrackSegment::bundle(
+                    s1.1,
+                    s1.2,
+                    track_segment.start_node,
+                    new_junction,
+                ));
+                commands.entity(new_ts2).insert(TrackSegment::bundle(
+                    s2.1,
+                    s2.2,
+                    new_junction,
+                    track_segment.end_node,
+                ));
+                new_junction
+            }
+        } else if let SnapNode::DeadEnd { node, .. } = builder.start_snap {
             if let Ok((_, mut track_node)) = track.nodes.get_mut(node) {
-                track_node.make_cont(segment_entities[0]);
+                track_node.add_track(segment_entities[0]);
             }
             node
         } else {
@@ -502,9 +784,62 @@ fn build_track_spawner(
                 .id()
         };
 
-        let end_node_ent = if let SnapNode::DeadEnd { node, .. } = builder.current_snap {
+        let end_node_ent = if let SnapNode::NewJunction {
+            segment: ent_seg,
+            pos,
+            normal,
+        } = builder.current_snap
+        {
+            let Some((track_segment, mut start_n, mut end_n)) = track.get_track_mut(ent_seg) else {
+                return;
+            };
+
+            if start_n.pos().distance(pos) < MIN_LENGTH_TO_BUILD {
+                start_n.add_track(*segment_entities.last().unwrap());
+                track_segment.start_node
+            } else if end_n.pos().distance(pos) < MIN_LENGTH_TO_BUILD {
+                end_n.add_track(*segment_entities.last().unwrap());
+                track_segment.end_node
+            } else {
+                let (s1, s2) = bezier::split_at_pos(
+                    start_n.pos(),
+                    track_segment.p1,
+                    track_segment.p2,
+                    end_n.pos(),
+                    pos,
+                );
+                commands.entity(ent_seg).despawn();
+
+                let new_ts1 = commands.spawn_empty().id();
+                start_n.replace_track(ent_seg, new_ts1);
+                let new_ts2 = commands.spawn_empty().id();
+                end_n.replace_track(ent_seg, new_ts2);
+
+                let new_junction = commands
+                    .spawn(TrackNode::bundle_junc(
+                        pos,
+                        normal,
+                        [new_ts1, new_ts2, segment_entities[0]],
+                    ))
+                    .id();
+
+                commands.entity(new_ts1).insert(TrackSegment::bundle(
+                    s1.1,
+                    s1.2,
+                    track_segment.start_node,
+                    new_junction,
+                ));
+                commands.entity(new_ts2).insert(TrackSegment::bundle(
+                    s2.1,
+                    s2.2,
+                    new_junction,
+                    track_segment.end_node,
+                ));
+                new_junction
+            }
+        } else if let SnapNode::DeadEnd { node, .. } = builder.current_snap {
             if let Ok((_, mut track_node)) = track.nodes.get_mut(node) {
-                track_node.make_cont(*segment_entities.last().unwrap());
+                track_node.add_track(*segment_entities.last().unwrap());
             }
             node
         } else {
@@ -624,38 +959,36 @@ fn bulldoze_track(
             continue;
         };
 
-        match *node {
-            TrackNode::DeadEnd {
-                track: old_track, ..
-            } => {
-                if old_track == deleted_seg_ent {
-                    commands.entity(node_ent).despawn();
-                }
+        if let TrackNode::DeadEnd {
+            track: old_track, ..
+        } = *node
+        {
+            if old_track == deleted_seg_ent {
+                commands.entity(node_ent).despawn();
+                continue;
             }
-            TrackNode::Continuation { pos, tracks, .. } => {
-                if tracks.contains(&deleted_seg_ent) {
-                    let surviving_ent = if tracks[0] == deleted_seg_ent {
-                        tracks[1]
-                    } else {
-                        tracks[0]
-                    };
-                    if let Ok((_, surviving_seg)) = track.segments.get(surviving_ent) {
-                        let tangent = if surviving_seg.start_node == node_ent {
-                            (pos - surviving_seg.p1).normalize_or_zero()
-                        } else {
-                            (pos - surviving_seg.p2).normalize_or_zero()
-                        };
-                        *node = TrackNode::DeadEnd {
-                            pos,
-                            tangent,
-                            track: surviving_ent,
-                        };
-                    } else {
-                        commands.entity(node_ent).despawn();
-                    }
-                }
+        }
+
+        node.remove_track(deleted_seg_ent);
+
+        if let TrackNode::DeadEnd {
+            track: surviving_ent,
+            pos,
+            ..
+        } = *node
+        {
+            if let Ok((_, surviving_seg)) = track.segments.get(surviving_ent) {
+                let tangent = if surviving_seg.start_node == node_ent {
+                    (pos - surviving_seg.p1).normalize_or_zero()
+                } else {
+                    (pos - surviving_seg.p2).normalize_or_zero()
+                };
+                *node = TrackNode::DeadEnd {
+                    pos,
+                    tangent,
+                    track: surviving_ent,
+                };
             }
-            _ => todo!(),
         }
     }
 }
@@ -847,22 +1180,17 @@ fn debug_draw_track(
             && node.pos().y >= view_min.y
             && node.pos().y <= view_max.y
         {
-            gizmos.circle_2d(node.pos(), 3.0, Color::srgb(1.0, 1.0, 1.0));
-            gizmos.circle_2d(
-                node.pos(),
-                NEW_TRACK_SNAP_RADIUS,
-                Color::srgb(0.2, 0.5, 1.0),
-            );
-            let dir = match node {
-                TrackNode::DeadEnd { tangent, .. } => tangent,
-                TrackNode::Continuation { normal, .. } | TrackNode::Junction { normal, .. } => {
-                    normal
-                }
+            let (dir, color) = match node {
+                TrackNode::DeadEnd { tangent, .. } => (tangent, Color::srgb(1.0, 0.0, 0.0)),
+                TrackNode::Continuation { normal, .. } => (normal, Color::srgb(0.0, 1.0, 0.0)),
+                TrackNode::Junction { normal, .. } => (normal, Color::srgb(0.0, 0.0, 1.0)),
+                TrackNode::Crossing { normal, .. } => (normal, Color::srgb(1.0, 1.0, 1.0)),
             };
+            gizmos.circle_2d(node.pos(), 5., color);
             gizmos.arrow_2d(
                 node.pos(),
                 node.pos() + dir * 10.0,
-                Color::srgb(1.0, 1.0, 0.2),
+                Color::srgb(1.0, 1.0, 0.),
             );
         }
     }

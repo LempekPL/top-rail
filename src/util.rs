@@ -1,6 +1,6 @@
 use bevy::color::Color;
 use bevy::math::Vec2;
-use bevy::prelude::Gizmos;
+use bevy::prelude::{CubicBezier, CubicGenerator, Gizmos};
 
 pub mod bezier {
     use bevy::math::Vec2;
@@ -20,7 +20,53 @@ pub mod bezier {
         6.0 * u * (p2 - p1 * 2.0 + p0) + 6.0 * t * (p3 - p2 * 2.0 + p1)
     }
 
-    // pub fn offset(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: f32, offset: f32) -> Vec2 {}
+    pub fn find_t_from_pos(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, pos: Vec2) -> f32 {
+        let mut t = 0.5;
+        let iterations = 8;
+        for _ in 0..iterations {
+            let current_pos = eval(p0, p1, p2, p3, t);
+            let d1 = derivative(p0, p1, p2, p3, t);
+            let d2 = second_derivative(p0, p1, p2, p3, t);
+            let delta = current_pos - pos;
+            let f = delta.dot(d1);
+            let f_prime = d1.dot(d1) + delta.dot(d2);
+            if f_prime.abs() < 1e-6 {
+                break;
+            }
+            t -= f / f_prime;
+        }
+        t.clamp(0.0, 1.0)
+    }
+
+    pub fn split_at_t(
+        p0: Vec2,
+        p1: Vec2,
+        p2: Vec2,
+        p3: Vec2,
+        t: f32,
+    ) -> ((Vec2, Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2, Vec2)) {
+        let p01 = p0.lerp(p1, t);
+        let p12 = p1.lerp(p2, t);
+        let p23 = p2.lerp(p3, t);
+
+        let p012 = p01.lerp(p12, t);
+        let p123 = p12.lerp(p23, t);
+
+        let p0123 = p012.lerp(p123, t);
+
+        ((p0, p01, p012, p0123), (p0123, p123, p23, p3))
+    }
+
+    pub fn split_at_pos(
+        p0: Vec2,
+        p1: Vec2,
+        p2: Vec2,
+        p3: Vec2,
+        pos: Vec2,
+    ) -> ((Vec2, Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2, Vec2)) {
+        let t = find_t_from_pos(p0, p1, p2, p3, pos);
+        split_at_t(p0, p1, p2, p3, t)
+    }
 }
 
 pub fn create_straight(
@@ -62,7 +108,7 @@ pub fn create_arc(
     let normal = Vec2::new(-start_tangent.y, start_tangent.x);
     let chord = p_end - p_start;
     let d = chord.dot(normal);
-    
+
     // if chord and tangent are very close just make it straight
     if d.abs() < 0.00001 {
         return create_straight(p_start, p_end, segment_length);
@@ -165,11 +211,17 @@ pub fn draw_bezier(gizmos: &mut Gizmos, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, 
     let approx_length = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
     let calculated_segments = (approx_length / pixels_per_segment).ceil() as usize;
     let segments = calculated_segments.clamp(10, 256);
-    let mut prev_point = p0;
-    for i in 1..=segments {
-        let t = i as f32 / segments as f32;
-        let current_point = bezier::eval(p0, p1, p2, p3, t);
-        gizmos.line_2d(prev_point, current_point, color);
-        prev_point = current_point;
-    }
+    gizmos.curve_2d(
+        CubicBezier::new([[p0, p1, p2, p3]]).to_curve().unwrap(),
+        (0..=segments).map(|n| n as f32 / segments as f32),
+        color,
+    );
+
+    // let mut prev_point = p0;
+    // for i in 1..=segments {
+    //     let t = i as f32 / segments as f32;
+    //     let current_point = bezier::eval(p0, p1, p2, p3, t);
+    //     gizmos.line_2d(prev_point, current_point, color);
+    //     prev_point = current_point;
+    // }
 }
