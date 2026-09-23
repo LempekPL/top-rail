@@ -1,11 +1,10 @@
-use bevy::color::Color;
+use bevy::asset::RenderAssetUsages;
 use bevy::math::Vec2;
-use bevy::prelude::{CubicBezier, CubicGenerator, Gizmos};
+use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
 
 pub mod bezier {
     use bevy::math::Vec2;
     use bevy::math::cubic_splines::CubicSegment;
-    use bevy::prelude::CubicBezier;
 
     #[inline]
     pub fn build_segment(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> CubicSegment<Vec2> {
@@ -195,15 +194,60 @@ pub fn create_segmented_bezier(
     segments
 }
 
-pub fn draw_bezier(gizmos: &mut Gizmos, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, color: Color) {
-    let pixels_per_segment = 15.0;
+#[derive(Default, Debug, Clone)]
+pub struct MeshBuffer {
+    pos: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    ind: Vec<u32>,
+}
 
-    let approx_length = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
-    let calculated_segments = (approx_length / pixels_per_segment).ceil() as usize;
-    let segments = calculated_segments.clamp(10, 256);
-    gizmos.curve_2d(
-        CubicBezier::new([[p0, p1, p2, p3]]).to_curve().unwrap(),
-        (0..=segments).map(|n| n as f32 / segments as f32),
-        color,
-    );
+impl MeshBuffer {
+    pub fn with_capacity(quad_count: usize) -> Self {
+        Self {
+            pos: Vec::with_capacity(quad_count * 4),
+            uvs: Vec::with_capacity(quad_count * 4),
+            ind: Vec::with_capacity(quad_count * 6),
+        }
+    }
+
+    pub fn to_mesh(self) -> Mesh {
+        let mut m = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
+        m.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.pos);
+        m.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
+        m.insert_indices(Indices::U32(self.ind));
+        m
+    }
+
+    pub fn push_quad(&mut self, bl: Vec2, br: Vec2, tr: Vec2, tl: Vec2) {
+        self.push_quad_uv(bl, br, tr, tl, [0., 0.], [0., 1.], [1., 1.], [1., 0.]);
+    }
+
+    pub fn push_quad_uv(
+        &mut self,
+        bl: Vec2,
+        br: Vec2,
+        tr: Vec2,
+        tl: Vec2,
+        uv_bl: [f32; 2],
+        uv_br: [f32; 2],
+        uv_tr: [f32; 2],
+        uv_tl: [f32; 2],
+    ) {
+        let start = self.pos.len() as u32;
+
+        self.pos.extend_from_slice(&[
+            [bl.x, bl.y, 0.],
+            [br.x, br.y, 0.],
+            [tr.x, tr.y, 0.],
+            [tl.x, tl.y, 0.],
+        ]);
+
+        self.uvs.extend_from_slice(&[uv_bl, uv_br, uv_tr, uv_tl]);
+
+        self.ind
+            .extend_from_slice(&[start, start + 1, start + 2, start + 2, start + 3, start]);
+    }
 }

@@ -2,6 +2,7 @@
 
 mod camera;
 mod controls;
+mod debug;
 mod gui;
 mod railway;
 mod save_load;
@@ -10,6 +11,7 @@ mod util;
 
 use crate::camera::CameraPlugin;
 use crate::controls::ControlsPlugin;
+use crate::debug::DebugRenderPlugin;
 use crate::gui::GuiPlugin;
 use crate::railway::RailwayPlugin;
 use crate::save_load::SaveLoadPlugin;
@@ -18,6 +20,8 @@ use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTime
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
+
+const PIXELS_PER_SEGMENT: f32 = 12.0;
 
 fn main() {
     App::new()
@@ -44,7 +48,7 @@ fn main() {
                 },
             },
         })
-        .add_plugins((GuiPlugin, SaveLoadPlugin, bevy::sprite_render::Wireframe2dPlugin::default()))
+        .add_plugins((GuiPlugin, SaveLoadPlugin, DebugRenderPlugin))
         .add_plugins((RailwayPlugin, StateManagerPlugin, ControlsPlugin))
         .add_plugins(CameraPlugin)
         .add_plugins(FramepacePlugin)

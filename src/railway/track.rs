@@ -1,6 +1,7 @@
 use crate::camera::MainCamera;
-use crate::controls::Controls;
-use crate::state_manager::{DespawnWhenMainMenu, GameState, PlayingState};
+use crate::debug::{TrackGizmos, draw_bezier, draw_segments};
+use crate::railway::graphics::TrackMaterials;
+use crate::state_manager::{DespawnWhenMainMenu, PlayingState};
 use crate::util::*;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -26,60 +27,9 @@ const _: () = assert!(
 );
 const SIDE_CHANGE_RADIUS: f32 = 10.0;
 
-#[derive(Resource, Default)]
-struct TrackDebug {
-    debug: bool,
-}
-
-fn update_debug_setting(
-    controls: Controls,
-    mut td: ResMut<TrackDebug>,
-    mut s_text: Single<&mut Node, With<DebugTrackText>>,
-) {
-    if controls.just_pressed(|k| k.debug) {
-        td.debug = !td.debug;
-        if td.debug {
-            s_text.display = Display::Flex
-        } else {
-            s_text.display = Display::None
-        }
-    }
-}
-
-#[derive(Component, Default, Clone)]
-struct DebugTrackText;
-
-fn setup_debug_text(mut commands: Commands, td: Res<TrackDebug>) {
-    let display = if td.debug {
-        Display::Flex
-    } else {
-        Display::None
-    };
-    commands.spawn_scene(bsn! {
-        Node {
-            display,
-            position_type: PositionType::Absolute,
-            right: px(10),
-            top: px(10),
-        }
-        Text("")
-        DebugTrackText
-        DespawnWhenMainMenu
-    });
-}
-
-fn debug_track_text(track: Track, mut s_text: Single<&mut Text, With<DebugTrackText>>) {
-    s_text.0 = format!(
-        "Segments: {:5}\nNodes:    {:5}",
-        track.segments.count(),
-        track.nodes.count()
-    )
-}
-
 impl Plugin for TrackPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TrackBuilder>();
-        app.insert_resource(TrackDebug { debug: false });
         app.add_systems(
             Update,
             (
@@ -93,14 +43,6 @@ impl Plugin for TrackPlugin {
             ),
         );
         app.add_systems(OnExit(PlayingState::Build), reset_building);
-
-        // debug systems
-        app.add_systems(OnEnter(GameState::Playing), setup_debug_text);
-        app.add_systems(
-            Update,
-            (debug_draw_track, debug_track_text).run_if(|td: Res<TrackDebug>| td.debug),
-        );
-        app.add_systems(Update, update_debug_setting);
     }
 }
 
@@ -153,19 +95,28 @@ pub struct TrackBuilder {
     pub drag_dir: i8,
     pub start_snap: SnapNode,
     pub current_snap: SnapNode,
+
+    pub preview_entities: Vec<Entity>,
+    pub preview_meshes: Vec<Handle<Mesh>>,
 }
 
 impl TrackBuilder {
-    fn stop(&mut self) {
-        self.is_building = false;
-        self.drag_dir = 0;
-    }
-
     fn reset(&mut self) {
         self.is_building = false;
         self.drag_dir = 0;
         self.current_snap = SnapNode::None;
         self.start_snap = SnapNode::None;
+    }
+
+    pub fn clear_preview(&mut self, commands: &mut Commands, meshes: &mut Assets<Mesh>) {
+        for ent in self.preview_entities.drain(..) {
+            if let Ok(mut entity_commands) = commands.get_entity(ent) {
+                entity_commands.despawn();
+            }
+        }
+        for handle in self.preview_meshes.drain(..) {
+            meshes.remove(&handle);
+        }
     }
 }
 
@@ -427,6 +378,19 @@ impl<'w, 's> Track<'w, 's> {
             Some((segment, start, end))
         })
     }
+
+    pub fn get_curve(&self, seg_ent: Entity) -> Option<CubicSegment<Vec2>> {
+        self.segments.get(seg_ent).map_or(None, |(_, segment)| {
+            let (_, start) = self.nodes.get(segment.start_node).ok()?;
+            let (_, end) = self.nodes.get(segment.end_node).ok()?;
+            Some(bezier::build_segment(
+                start.pos(),
+                segment.p1,
+                segment.p2,
+                end.pos(),
+            ))
+        })
+    }
 }
 
 #[derive(SystemParam)]
@@ -462,7 +426,7 @@ impl<'w, 's> TrackMut<'w, 's> {
 }
 
 fn build_track_snapper(
-    mut gizmos: Gizmos,
+    mut gizmos: TrackGizmos,
     mut builder: ResMut<TrackBuilder>,
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
@@ -578,11 +542,15 @@ fn build_track_snapper(
 
 fn build_track_spawner(
     mut commands: Commands,
-    mut gizmos: Gizmos,
+    mut gizmos: TrackGizmos,
     mut builder: ResMut<TrackBuilder>,
     r_mouse: Res<ButtonInput<MouseButton>>,
     mut track: TrackMut,
+    mut meshes: ResMut<Assets<Mesh>>,
+    materials: Res<TrackMaterials>,
 ) {
+    builder.clear_preview(&mut commands, &mut meshes);
+
     if matches!(builder.current_snap, SnapNode::None) {
         return;
     }
@@ -687,19 +655,57 @@ fn build_track_spawner(
     let validation = validate_segments(&segments);
 
     if validation.drawable() {
-        for (sg0, sg1, sg2, sg3) in segments.iter() {
-            let color = if validation.spawnable() {
+        let is_valid = validation.spawnable();
+        draw_segments(
+            &mut gizmos,
+            &segments,
+            if is_valid {
                 Color::srgb(0., 1., 0.)
             } else {
                 Color::srgb(1., 0., 0.)
-            };
-            draw_bezier(&mut gizmos, *sg0, *sg1, *sg2, *sg3, color);
-            gizmos.circle_2d(*sg0, 3.0, Color::srgb(1., 1., 1.));
+            },
+        );
+        for (sg0, sg1, sg2, sg3) in segments.iter() {
+            let curve = bezier::build_segment(*sg0, *sg1, *sg2, *sg3);
+            let (m_ballast, m_sleepers, m_rails) =
+                crate::railway::graphics::build_track_mesh_from_curve(curve);
+
+            let h_ballast = meshes.add(m_ballast);
+            let h_sleepers = meshes.add(m_sleepers);
+            let h_rails = meshes.add(m_rails);
+
+            builder.preview_meshes.push(h_ballast.clone());
+            builder.preview_meshes.push(h_sleepers.clone());
+            builder.preview_meshes.push(h_rails.clone());
+
+            let preview_ent = commands
+                .spawn((Transform::default(), Visibility::default()))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Mesh2d(h_ballast),
+                        MeshMaterial2d(materials.ballast.clone()),
+                        Transform::from_xyz(0.0, 0.0, 1.0),
+                    ));
+                    parent.spawn((
+                        Mesh2d(h_sleepers),
+                        MeshMaterial2d(materials.sleepers.clone()),
+                        Transform::from_xyz(0.0, 0.0, 1.1),
+                    ));
+                    parent.spawn((
+                        Mesh2d(h_rails),
+                        MeshMaterial2d(materials.rails.clone()),
+                        Transform::from_xyz(0.0, 0.0, 1.2),
+                    ));
+                })
+                .id();
+
+            builder.preview_entities.push(preview_ent);
         }
     }
 
     if !r_mouse.pressed(MouseButton::Left) {
         if !validation.spawnable() {
+            builder.clear_preview(&mut commands, &mut meshes);
             builder.reset();
             return;
         }
@@ -882,12 +888,18 @@ fn build_track_spawner(
             }
         }
 
+        builder.clear_preview(&mut commands, &mut meshes);
         builder.reset();
     }
 }
 
-fn reset_building(mut builder: ResMut<TrackBuilder>) {
-    builder.stop();
+fn reset_building(
+    mut commands: Commands,
+    mut builder: ResMut<TrackBuilder>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    builder.clear_preview(&mut commands, &mut meshes);
+    builder.reset();
 }
 
 fn bulldoze_track(
@@ -895,7 +907,7 @@ fn bulldoze_track(
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     r_mouse: Res<ButtonInput<MouseButton>>,
-    mut gizmos: Gizmos,
+    mut gizmos: TrackGizmos,
     mut track: TrackMut,
 ) {
     let (camera, camera_transform) = *s_camera;
@@ -1128,63 +1140,4 @@ pub fn is_segment_valid(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, min_radius: f32)
         }
     }
     true
-}
-
-fn debug_draw_track(
-    track: Track,
-    mut gizmos: Gizmos,
-    q_camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
-) {
-    let (camera, camera_transform) = *q_camera;
-    let Some(viewport_size) = camera.logical_viewport_size() else {
-        return;
-    };
-    let Ok(bottom_left) = camera.viewport_to_world_2d(camera_transform, Vec2::ZERO) else {
-        return;
-    };
-    let Ok(top_right) = camera.viewport_to_world_2d(camera_transform, viewport_size) else {
-        return;
-    };
-    let mut view_min = bottom_left.min(top_right);
-    let mut view_max = bottom_left.max(top_right);
-    let margin = Vec2::splat(50.0);
-    view_min -= margin;
-    view_max += margin;
-    let intersects = |min1: Vec2, max1: Vec2, min2: Vec2, max2: Vec2| -> bool {
-        min1.x <= max2.x && max1.x >= min2.x && min1.y <= max2.y && max1.y >= min2.y
-    };
-    for (_, segment, start_node, end_node) in track.iter_track() {
-        let p0 = start_node.pos();
-        let p1 = segment.p1;
-        let p2 = segment.p2;
-        let p3 = end_node.pos();
-
-        let seg_min = p0.min(p1).min(p2).min(p3);
-        let seg_max = p0.max(p1).max(p2).max(p3);
-
-        if intersects(seg_min, seg_max, view_min, view_max) {
-            draw_bezier(&mut gizmos, p0, p1, p2, p3, Color::srgb(0.9, 0.9, 0.9));
-        }
-    }
-
-    for node in track.iter_nodes() {
-        if node.pos().x >= view_min.x
-            && node.pos().x <= view_max.x
-            && node.pos().y >= view_min.y
-            && node.pos().y <= view_max.y
-        {
-            let (dir, color) = match node {
-                TrackNode::DeadEnd { tangent, .. } => (tangent, Color::srgb(1.0, 0.0, 0.0)),
-                TrackNode::Continuation { normal, .. } => (normal, Color::srgb(0.0, 1.0, 0.0)),
-                TrackNode::Junction { normal, .. } => (normal, Color::srgb(0.0, 0.0, 1.0)),
-                TrackNode::Crossing { normal, .. } => (normal, Color::srgb(1.0, 1.0, 1.0)),
-            };
-            gizmos.circle_2d(node.pos(), 5., color);
-            gizmos.arrow_2d(
-                node.pos(),
-                node.pos() + dir * 10.0,
-                Color::srgb(1.0, 1.0, 0.),
-            );
-        }
-    }
 }
