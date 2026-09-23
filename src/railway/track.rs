@@ -79,7 +79,7 @@ fn debug_track_text(track: Track, mut s_text: Single<&mut Text, With<DebugTrackT
 impl Plugin for TrackPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TrackBuilder>();
-        app.insert_resource(TrackDebug { debug: true });
+        app.insert_resource(TrackDebug { debug: false });
         app.add_systems(
             Update,
             (

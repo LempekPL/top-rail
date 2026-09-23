@@ -44,7 +44,7 @@ fn main() {
                 },
             },
         })
-        .add_plugins((GuiPlugin, SaveLoadPlugin))
+        .add_plugins((GuiPlugin, SaveLoadPlugin, bevy::sprite_render::Wireframe2dPlugin::default()))
         .add_plugins((RailwayPlugin, StateManagerPlugin, ControlsPlugin))
         .add_plugins(CameraPlugin)
         .add_plugins(FramepacePlugin)

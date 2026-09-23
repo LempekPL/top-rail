@@ -1,7 +1,6 @@
 use crate::camera::MainCamera;
-use crate::railway::track::{TrackSegment};
+use crate::railway::track::TrackSegment;
 use crate::state_manager::PlayingState;
-use crate::util::bezier;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
