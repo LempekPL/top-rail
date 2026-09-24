@@ -9,7 +9,6 @@ use crate::state_manager::{DespawnWhenMainMenu, PlayingState};
 use crate::util::*;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use std::cmp::PartialEq;
 use std::f32::consts::FRAC_1_SQRT_2;
 
 #[derive(Default)]
@@ -539,17 +538,23 @@ fn build_track_spawner(
     mut track: TrackMut,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: Res<TrackMaterials>,
+    mut last_pos: Local<SnapNode>,
 ) {
-    builder.clear_preview(&mut commands, &mut meshes);
-
     if matches!(builder.current_snap, SnapNode::None) {
         return;
     }
+    if *last_pos == builder.current_snap && r_mouse.pressed(MouseButton::Left) {
+        return;
+    }
+
     let p0 = builder.start_snap.pos();
     let mut p3 = builder.current_snap.pos();
     if p0 == p3 {
         return;
     }
+
+    *last_pos = builder.current_snap.clone();
+    builder.clear_preview(&mut commands, &mut meshes);
 
     let mut start_tangent = None;
     match builder.start_snap {

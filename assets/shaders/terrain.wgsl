@@ -41,28 +41,33 @@ fn perlinNoise2(P: vec2f) -> f32 {
     return 2.3 * n_xy;
 }
 
-fn hash_2d(p: vec2<f32>) -> f32 {
-    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453123);
+fn hash21(p: vec2<f32>) -> f32 {
+    var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
 }
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let world_pos = (in.uv - 0.5) * 100000.0;
-    let n = perlinNoise2(world_pos * 0.001);
 
-    let threshold = 0.10;
-    let smoothness = 1.0;
-    let step_n = smoothstep(threshold - smoothness, threshold + smoothness, n);
-    let color_grass = vec3<f32>(0.03, 0.14, 0.01);
-    let color_grass_dark = vec3<f32>(0.01, 0.08, 0);
-    let grass_color = mix(color_grass, color_grass_dark, n);
+    let block_size = 16.0;
+    let snapped_pos = floor(world_pos / block_size) * block_size;
 
-//    let color_greener = vec3<f32>(0.001, 0.07, 0);
-//    let grainy = perlinNoise2(world_pos * 0.1);
-//    let grainy_threshold = 0.60;
-//    let grainy_smoothness = 1.;
-//    let step_grainy = (smoothstep(grainy_threshold - grainy_smoothness, grainy_threshold + grainy_smoothness, grainy) + 1.) / 2.;
-//    let final_color = mix(grass_color, color_greener, step_grainy);
-//    let final_color = vec3<f32>(step_grainy);
-    return vec4<f32>(grass_color, 1.0);
+    let n = perlinNoise2(snapped_pos * 0.001);
+
+    let normalized_n = n * 0.5 + 0.5;
+    let color_grass_dark = vec3<f32>(0.02, 0.10, 0.02);
+    let color_grass_light = vec3<f32>(0.04, 0.16, 0.03);
+
+    var final_color = mix(color_grass_dark, color_grass_light, normalized_n);
+
+    let detail_size = 2.0;
+    let detail_pos = floor(world_pos / detail_size);
+    let micro_noise_strength = 0.015;
+    let micro_noise = (hash21(detail_pos) - 0.5) * micro_noise_strength;
+
+    final_color += micro_noise;
+
+    return vec4<f32>(final_color, 1.0);
 }

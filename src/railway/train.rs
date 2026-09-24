@@ -74,7 +74,7 @@ fn spawn_train(
     commands.spawn((
         Sprite {
             color: Color::srgb(1.0, 0.4, 0.0),
-            custom_size: Some(Vec2::new(50.0, 18.0)),
+            custom_size: Some(Vec2::new(50.0, 20.0)),
             ..default()
         },
         Transform::from_translation(spawn_pos.extend(5.0))

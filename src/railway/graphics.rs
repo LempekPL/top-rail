@@ -1,10 +1,10 @@
-use bevy::math::ops::sqrt;
 use crate::consts::track::{
     RAIL_OFFSET, RAIL_WIDTH, SLEEPER_HEIGHT, SLEEPER_SPACING, SLEEPER_WIDTH, TRACK_WIDTH,
 };
 use crate::railway::track::{Track, TrackSegment};
 use crate::state_manager::PlayingState;
 use crate::util::MeshBuffer;
+use bevy::math::ops::sqrt;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
@@ -209,7 +209,12 @@ pub fn build_track_mesh_from_curve(cubic_curve: CubicSegment<Vec2>) -> (Mesh, Me
 
     for i in 0..=num_sleepers {
         let t = i as f32 / num_sleepers.max(1) as f32;
-        let p = cubic_curve.position(t);
+        let p = cubic_curve.position(t)
+            // slightly move sleepers so they look more "natural"
+            + Vec2::new(
+                rand::random_range(-0.5..=0.5),
+                rand::random_range(-0.25..=0.25),
+            );
         let d = cubic_curve.velocity(t).normalize_or_zero();
         let n = Vec2::new(-d.y, d.x);
 
