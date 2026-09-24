@@ -4,7 +4,7 @@ use crate::consts::building::{
 };
 use crate::consts::track::TRACK_WIDTH;
 use crate::debug::{TrackGizmos, draw_bezier, draw_segments};
-use crate::railway::graphics::{TrackMaterials, build_track_mesh_from_curve, tint};
+use crate::railway::graphics::{SnapCursor, TrackMaterials, build_track_mesh_from_curve, tint};
 use crate::state_manager::{DespawnWhenMainMenu, PlayingState};
 use crate::util::*;
 use bevy::ecs::system::SystemParam;
@@ -98,6 +98,11 @@ impl TrackBuilder {
         self.drag_dir = 0;
         self.current_snap = SnapNode::None;
         self.start_snap = SnapNode::None;
+    }
+
+    fn restart(&mut self, commands: &mut Commands, meshes: &mut Assets<Mesh>) {
+        self.clear_preview(commands, meshes);
+        self.reset();
     }
 
     pub fn clear_preview(&mut self, commands: &mut Commands, meshes: &mut Assets<Mesh>) {
@@ -418,11 +423,11 @@ impl<'w, 's> TrackMut<'w, 's> {
 }
 
 fn build_track_snapper(
-    mut gizmos: TrackGizmos,
     mut builder: ResMut<TrackBuilder>,
     s_window: Single<&Window, With<PrimaryWindow>>,
     s_camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     r_mouse: Res<ButtonInput<MouseButton>>,
+    s_cursor: Single<&mut Transform, With<SnapCursor>>,
     track: Track,
 ) {
     let (camera, camera_transform) = *s_camera;
@@ -432,6 +437,7 @@ fn build_track_snapper(
     else {
         return;
     };
+    let mut cursor_transform = s_cursor.into_inner();
 
     let mut snap = SnapNode::NoSnap {
         pos: cursor_world_pos,
@@ -522,7 +528,7 @@ fn build_track_snapper(
         }
     }
 
-    gizmos.circle_2d(snap.pos(), 5., Color::WHITE);
+    cursor_transform.translation = snap.pos().extend(cursor_transform.translation.z);
     if r_mouse.just_pressed(MouseButton::Left) {
         builder.is_building = true;
         builder.start_snap = snap;
@@ -710,8 +716,7 @@ fn build_track_spawner(
 
     if !r_mouse.pressed(MouseButton::Left) {
         if !validation.spawnable() {
-            builder.clear_preview(&mut commands, &mut meshes);
-            builder.reset();
+            builder.restart(&mut commands, &mut meshes);
             return;
         }
 
@@ -893,8 +898,7 @@ fn build_track_spawner(
             }
         }
 
-        builder.clear_preview(&mut commands, &mut meshes);
-        builder.reset();
+        builder.restart(&mut commands, &mut meshes);
     }
 }
 
@@ -903,8 +907,7 @@ fn reset_building(
     mut builder: ResMut<TrackBuilder>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    builder.clear_preview(&mut commands, &mut meshes);
-    builder.reset();
+    builder.restart(&mut commands, &mut meshes);
 }
 
 fn bulldoze_track(

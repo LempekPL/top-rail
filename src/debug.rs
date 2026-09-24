@@ -14,7 +14,7 @@ pub struct TrackDebug {
 impl Plugin for DebugRenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_gizmo_group::<TrackGizmosConfig>();
-        app.insert_resource(TrackDebug { debug: true });
+        app.insert_resource(TrackDebug { debug: false });
         app.add_systems(Startup, setup_track_gizmos_config);
         app.add_systems(OnEnter(GameState::Playing), setup_debug_text);
         app.add_systems(

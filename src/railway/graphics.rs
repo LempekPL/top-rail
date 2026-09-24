@@ -1,7 +1,9 @@
+use bevy::math::ops::sqrt;
 use crate::consts::track::{
     RAIL_OFFSET, RAIL_WIDTH, SLEEPER_HEIGHT, SLEEPER_SPACING, SLEEPER_WIDTH, TRACK_WIDTH,
 };
 use crate::railway::track::{Track, TrackSegment};
+use crate::state_manager::PlayingState;
 use crate::util::MeshBuffer;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
@@ -15,8 +17,60 @@ impl Plugin for GraphicsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<BallastMaterial>::default());
 
-        app.add_systems(Startup, setup_track_material);
-        app.add_systems(Update, spawn_track_meshes);
+        app.add_systems(Startup, (setup_track_material, setup_snap_cursor));
+        app.add_systems(
+            Update,
+            (
+                spawn_track_meshes,
+                update_snap_cursor_visibility.run_if(state_changed::<PlayingState>),
+            ),
+        );
+    }
+}
+
+#[derive(Component)]
+pub struct SnapCursor;
+
+fn setup_snap_cursor(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let inner_mesh = meshes.add(Circle::new(sqrt(TRACK_WIDTH)));
+    let outer_mesh = meshes.add(Circle::new(TRACK_WIDTH));
+    let solid_blue = materials.add(Color::srgb(0.2, 0.6, 1.0));
+    let transparent_blue = materials.add(Color::srgba(0.2, 0.6, 1.0, 0.3));
+    commands
+        .spawn((
+            Transform::from_xyz(0.0, 0.0, 10.0),
+            Visibility::Hidden,
+            SnapCursor,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Mesh2d(outer_mesh),
+                MeshMaterial2d(transparent_blue),
+                Transform::from_xyz(0.0, 0.0, -0.1),
+            ));
+            parent.spawn((
+                Mesh2d(inner_mesh),
+                MeshMaterial2d(solid_blue),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ));
+        });
+}
+
+fn update_snap_cursor_visibility(
+    s_railway: Option<Res<State<PlayingState>>>,
+    s_cursor: Single<&mut Visibility, With<SnapCursor>>,
+) {
+    let mut cursor_vis = s_cursor.into_inner();
+    if let Some(railway) = s_railway
+        && railway.get() == &PlayingState::Build
+    {
+        *cursor_vis = Visibility::Inherited;
+    } else {
+        *cursor_vis = Visibility::Hidden;
     }
 }
 
