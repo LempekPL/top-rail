@@ -1,7 +1,9 @@
 use crate::consts::camera::{ZOOM_MAX, ZOOM_MIN, ZOOM_SPEED};
 use crate::state_manager::PlayingState;
+use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 pub struct CameraPlugin;
 
@@ -9,6 +11,26 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_camera);
         app.add_systems(Update, move_camera);
+    }
+}
+
+#[derive(SystemParam)]
+pub struct WindowCamera<'w, 's> {
+    window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
+    camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform), With<MainCamera>>,
+}
+
+impl<'w, 's> WindowCamera<'w, 's> {
+    pub fn get_world_cursor(&self) -> Option<Vec2> {
+        let (camera, camera_transform) = *self.camera;
+        let Some(cursor_world_pos) = self
+            .window
+            .cursor_position()
+            .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor).ok())
+        else {
+            return None;
+        };
+        Some(cursor_world_pos)
     }
 }
 

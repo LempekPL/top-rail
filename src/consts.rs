@@ -18,7 +18,7 @@ pub mod track {
 pub mod building {
     pub const TRACK_BUILD_SNAP_RADIUS: f32 = 16.0;
     pub const BUILDING_SNAP_RADIUS: f32 = 16.0;
-    pub const MIN_CURVATURE: f32 = 100.0;
+    pub const MIN_CURVATURE: f32 = 160.0;
     pub const MIN_LENGTH: f32 = 20.0;
     pub const SEGMENT_LENGTH: f32 = 160.0;
 }

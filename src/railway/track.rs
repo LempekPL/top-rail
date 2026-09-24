@@ -1,4 +1,4 @@
-use crate::camera::MainCamera;
+use crate::camera::WindowCamera;
 use crate::consts::building::{
     BUILDING_SNAP_RADIUS, MIN_CURVATURE, MIN_LENGTH, SEGMENT_LENGTH, TRACK_BUILD_SNAP_RADIUS,
 };
@@ -9,7 +9,6 @@ use crate::state_manager::{DespawnWhenMainMenu, PlayingState};
 use crate::util::*;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 use std::cmp::PartialEq;
 use std::f32::consts::FRAC_1_SQRT_2;
 
@@ -424,17 +423,12 @@ impl<'w, 's> TrackMut<'w, 's> {
 
 fn build_track_snapper(
     mut builder: ResMut<TrackBuilder>,
-    s_window: Single<&Window, With<PrimaryWindow>>,
-    s_camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    camera: WindowCamera,
     r_mouse: Res<ButtonInput<MouseButton>>,
     s_cursor: Single<&mut Transform, With<SnapCursor>>,
     track: Track,
 ) {
-    let (camera, camera_transform) = *s_camera;
-    let Some(cursor_world_pos) = s_window
-        .cursor_position()
-        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor).ok())
-    else {
+    let Some(cursor_world_pos) = camera.get_world_cursor() else {
         return;
     };
     let mut cursor_transform = s_cursor.into_inner();
@@ -912,17 +906,12 @@ fn reset_building(
 
 fn bulldoze_track(
     mut commands: Commands,
-    s_window: Single<&Window, With<PrimaryWindow>>,
-    s_camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    camera: WindowCamera,
     r_mouse: Res<ButtonInput<MouseButton>>,
     mut gizmos: TrackGizmos,
     mut track: TrackMut,
 ) {
-    let (camera, camera_transform) = *s_camera;
-    let Some(cursor_world_pos) = s_window
-        .cursor_position()
-        .and_then(|cursor| camera.viewport_to_world_2d(camera_transform, cursor).ok())
-    else {
+    let Some(cursor_world_pos) = camera.get_world_cursor() else {
         return;
     };
 

@@ -1,10 +1,9 @@
 #![allow(dead_code)]
-extern crate core;
-
 mod camera;
 pub mod consts;
 mod controls;
 mod debug;
+mod environment;
 mod gui;
 mod railway;
 mod save_load;
@@ -14,6 +13,7 @@ mod util;
 use crate::camera::CameraPlugin;
 use crate::controls::ControlsPlugin;
 use crate::debug::DebugRenderPlugin;
+use crate::environment::EnvironmentPlugin;
 use crate::gui::GuiPlugin;
 use crate::railway::RailwayPlugin;
 use crate::save_load::SaveLoadPlugin;
@@ -48,8 +48,14 @@ fn main() {
                 },
             },
         })
-        .add_plugins((GuiPlugin, SaveLoadPlugin, DebugRenderPlugin))
-        .add_plugins((RailwayPlugin, StateManagerPlugin, ControlsPlugin))
+        .add_plugins((
+            GuiPlugin,
+            SaveLoadPlugin,
+            DebugRenderPlugin,
+            StateManagerPlugin,
+            ControlsPlugin,
+        ))
+        .add_plugins((RailwayPlugin, EnvironmentPlugin))
         .add_plugins(CameraPlugin)
         .add_plugins(FramepacePlugin)
         .add_systems(Startup, setup_framerate)

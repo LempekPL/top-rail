@@ -75,6 +75,29 @@ fn setup_build_menu(mut commands: Commands) {
                     r_next.set(PlayingState::Bulldoze);
                 }
             }),
+
+            @FeathersButton {
+                @caption: bsn! {
+                    Node {
+                        height: px(20),
+                    }
+                    ImageNode {
+                        image: "icons/train.png"
+                    }
+                }
+            }
+            Node {
+                height: px(32),
+                width: px(32),
+                border_radius: {RoundedCorners::All.to_border_radius(100.)},
+            }
+            on(|_: On<Activate>, r_current: Res<State<PlayingState>>, mut r_next: ResMut<NextState<PlayingState>>| {
+                if r_current.get() == &PlayingState::Spawn {
+                    r_next.set(PlayingState::None);
+                } else {
+                    r_next.set(PlayingState::Spawn);
+                }
+            }),
         ]
     });
 }

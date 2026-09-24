@@ -1,8 +1,7 @@
 #import bevy_sprite::mesh2d_vertex_output::VertexOutput
 
 fn hash_2d(p: vec2<f32>) -> f32 {
-    let n = dot(p, vec2<f32>(127.1, 311.7));
-    return fract(sin(n) * 43758.5453123);
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453123);
 }
 
 @fragment

@@ -1,8 +1,7 @@
-use crate::camera::MainCamera;
-use crate::railway::track::TrackSegment;
+use crate::camera::WindowCamera;
+use crate::railway::track::Track;
 use crate::state_manager::PlayingState;
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
 #[derive(Default)]
 pub struct TrainPlugin;
@@ -12,8 +11,8 @@ impl Plugin for TrainPlugin {
         app.add_systems(
             Update,
             (
-                spawn_train,
-                drive_controls.run_if(in_state(PlayingState::Drive)),
+                spawn_train.run_if(in_state(PlayingState::Spawn)),
+                // drive_controls.run_if(in_state(PlayingState::Drive)),
                 // move_trains,
             ),
         );
@@ -21,98 +20,87 @@ impl Plugin for TrainPlugin {
 }
 
 #[derive(Component)]
+pub struct SelectedTrain;
+
+#[derive(Component, Debug, Clone)]
 pub struct Train {
-    pub velocity: f32,
-    pub t_pos: f32,
-    pub current_track: Entity,
-    pub logical_dir: f32,
+    pub current_segment: Entity,
+    pub t: f32,
+    pub speed: f32,
+    pub direction: i8,
 }
 
-#[allow(dead_code, unused)]
+// in the future spawning will be only available in depot
 fn spawn_train(
     mut commands: Commands,
     r_mouse: Res<ButtonInput<MouseButton>>,
-    s_window: Single<&Window, With<PrimaryWindow>>,
-    s_camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
-    q_segments: Query<(Entity, &TrackSegment)>,
+    camera: WindowCamera,
+    track: Track,
 ) {
-    return;
-    // if !r_mouse.just_pressed(MouseButton::Left) {
-    //     return;
-    // }
-    //
-    // let (camera, camera_transform) = *s_camera;
-    // let Some(cursor_pos) = s_window
-    //     .cursor_position()
-    //     .and_then(|c| camera.viewport_to_world_2d(camera_transform, c).ok())
-    // else {
-    //     return;
-    // };
-    //
-    // let mut closest_entity = None;
-    // let mut min_dist = f32::MAX;
-    // let mut closest_t = 0.0;
-    //
-    // let mut closest_pos = Vec2::ZERO;
-    // let mut closest_tangent = Vec2::ZERO;
-    //
-    // for (entity, segment) in q_segments.iter() {
-    //     for i in 0..=10 {
-    //         let t = i as f32 / 10.0;
-    //         let pos = bezier::eval(segment.p0, segment.p1, segment.p2, segment.p3, t);
-    //         let dist = pos.distance(cursor_pos);
-    //
-    //         if dist < min_dist {
-    //             min_dist = dist;
-    //             closest_entity = Some(entity);
-    //             closest_t = t;
-    //             closest_pos = pos;
-    //             closest_tangent =
-    //                 bezier::derivative(segment.p0, segment.p1, segment.p2, segment.p3, t);
-    //         }
-    //     }
-    // }
-    //
-    // if min_dist < 40.0 {
-    //     if let Some(track_ent) = closest_entity {
-    //         let mut start_rotation = Quat::IDENTITY;
-    //         if closest_tangent.length_squared() > 0.0 {
-    //             start_rotation = Quat::from_rotation_z(closest_tangent.y.atan2(closest_tangent.x));
-    //         }
-    //
-    //         commands.spawn((
-    //             Train {
-    //                 velocity: 0.0,
-    //                 t_pos: closest_t,
-    //                 current_track: track_ent,
-    //                 logical_dir: 1.0,
-    //             },
-    //             Sprite {
-    //                 color: Color::srgb(1.0, 0.2, 0.2),
-    //                 custom_size: Some(Vec2::new(30.0, 14.0)),
-    //                 ..default()
-    //             },
-    //             Transform {
-    //                 translation: closest_pos.extend(1.0),
-    //                 rotation: start_rotation,
-    //                 ..default()
-    //             },
-    //         ));
-    //     }
-    // }
-}
+    if !r_mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let Some(cursor_pos) = camera.get_world_cursor() else {
+        return;
+    };
 
-fn drive_controls(r_keyboard: Res<ButtonInput<KeyCode>>, mut q_trains: Query<&mut Train>) {
-    for mut train in q_trains.iter_mut() {
-        if r_keyboard.pressed(KeyCode::ArrowUp) || r_keyboard.pressed(KeyCode::KeyE) {
-            train.velocity = 150.0;
-        } else if r_keyboard.pressed(KeyCode::ArrowDown) || r_keyboard.pressed(KeyCode::KeyQ) {
-            train.velocity = -150.0;
-        } else {
-            train.velocity = 0.0;
+    let mut closest_segment = None;
+    let mut closest_dist = 20.0;
+    let mut best_t = 0.0;
+    let mut spawn_pos = Vec2::ZERO;
+    let mut spawn_tangent = Vec2::ZERO;
+
+    for (seg_ent, curve) in track.iter_curves() {
+        let samples = 20;
+        for i in 0..=samples {
+            let t = i as f32 / samples as f32;
+            let point = curve.position(t);
+            let dist = point.distance(cursor_pos);
+
+            if dist < closest_dist {
+                closest_dist = dist;
+                closest_segment = Some(seg_ent);
+                best_t = t;
+                spawn_pos = point;
+                spawn_tangent = curve.velocity(t).normalize_or_zero();
+            }
         }
     }
+
+    let Some(segment_ent) = closest_segment else {
+        return;
+    };
+
+    commands.spawn((
+        Sprite {
+            color: Color::srgb(1.0, 0.4, 0.0),
+            custom_size: Some(Vec2::new(50.0, 18.0)),
+            ..default()
+        },
+        Transform::from_translation(spawn_pos.extend(5.0))
+            .with_rotation(Quat::from_rotation_z(spawn_tangent.to_angle())),
+        Train {
+            current_segment: segment_ent,
+            t: best_t,
+            speed: 0.1,
+            direction: 1,
+        },
+    ));
 }
+
+
+
+// fn drive_controls(r_keyboard: Res<ButtonInput<KeyCode>>, mut q_trains: Query<&mut Train>) {
+//     for mut train in q_trains.iter_mut() {
+//         if r_keyboard.pressed(KeyCode::ArrowUp) || r_keyboard.pressed(KeyCode::KeyE) {
+//             train.velocity = 150.0;
+//         } else if r_keyboard.pressed(KeyCode::ArrowDown) || r_keyboard.pressed(KeyCode::KeyQ) {
+//             train.velocity = -150.0;
+//         } else {
+//             train.velocity = 0.0;
+//         }
+//     }
+// }
 
 // fn move_trains(
 //     time: Res<Time>,

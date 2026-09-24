@@ -1,3 +1,4 @@
+use crate::camera::MainCamera;
 use crate::save_load::{LoadGame, SaveGame};
 use crate::state_manager::{GameState, MenuUiState, PauseUiState};
 use bevy::feathers::containers::{subpane_body, subpane_header};
@@ -111,8 +112,10 @@ fn main_menu() -> impl Scene {
                 @FeathersButton {
                     @caption: bsn! { Text("Start") ThemedText }
                 }
-                on(|_: On<Activate>, mut r_next: ResMut<NextState<GameState>>| {
+                on(|_: On<Activate>, mut r_next: ResMut<NextState<GameState>>, camera: Single<&mut Transform, With<MainCamera>>| {
                     r_next.set(GameState::Playing);
+                    let mut camera_pos = camera.into_inner();
+                    camera_pos.translation = Vec3::new(0.,0.,0.);
                 }),
 
                 @FeathersButton {
