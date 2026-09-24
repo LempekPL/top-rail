@@ -14,7 +14,7 @@ pub struct TrackDebug {
 impl Plugin for DebugRenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_gizmo_group::<TrackGizmosConfig>();
-        app.insert_resource(TrackDebug { debug: false });
+        app.insert_resource(TrackDebug { debug: true });
         app.add_systems(Startup, setup_track_gizmos_config);
         app.add_systems(OnEnter(GameState::Playing), setup_debug_text);
         app.add_systems(
@@ -167,7 +167,7 @@ pub fn draw_bezier<T: GizmoConfigGroup>(
     color: Color,
 ) {
     let approx_length = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
-    let calculated_segments = (approx_length / crate::PIXELS_PER_SEGMENT).ceil() as usize;
+    let calculated_segments = (approx_length / crate::consts::PIXELS_PER_SEGMENT).ceil() as usize;
     let segments = calculated_segments.clamp(10, 256);
 
     gizmos.curve_2d(

@@ -7,7 +7,7 @@ fn hash_2d(p: vec2<f32>) -> f32 {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    var color = vec3<f32>(0.15, 0.15, 0.15);
+    var color = vec3<f32>(0.15, 0.15, 0.15) * in.color.rgb;
 
     let noise_scale = 18.0;
     let noise = hash_2d(floor(in.uv * noise_scale)) * 0.15 - 0.075;

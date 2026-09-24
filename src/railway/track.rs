@@ -1,31 +1,23 @@
 use crate::camera::MainCamera;
+use crate::consts::building::{
+    BUILDING_SNAP_RADIUS, MIN_CURVATURE, MIN_LENGTH, SEGMENT_LENGTH, TRACK_BUILD_SNAP_RADIUS,
+};
+use crate::consts::track::TRACK_WIDTH;
 use crate::debug::{TrackGizmos, draw_bezier, draw_segments};
-use crate::railway::graphics::TrackMaterials;
+use crate::railway::graphics::{TrackMaterials, build_track_mesh_from_curve, tint};
 use crate::state_manager::{DespawnWhenMainMenu, PlayingState};
 use crate::util::*;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use std::cmp::PartialEq;
+use std::f32::consts::FRAC_1_SQRT_2;
 
 #[derive(Default)]
 pub struct TrackPlugin;
 
-// todo: better consts
-const TRACK_SPACING: f32 = 20.0;
-const NEW_TRACK_SNAP_RADIUS: f32 = 10.0;
-const BUILD_SNAP_DISTANCE: f32 = 15.0;
-const SEGMENT_LENGTH: f32 = 160.0;
-const MIN_LENGTH_TO_BUILD: f32 = 20.0;
-const MIN_RADIUS: f32 = 100.0;
-const FINER_SEGMENT_RADIUS: f32 = 35.0;
 // todo: make it more reasonable in the future
 const MAX_DEPTH_SEARCH: usize = usize::MAX;
-const _: () = assert!(
-    NEW_TRACK_SNAP_RADIUS + TRACK_SPACING < FINER_SEGMENT_RADIUS,
-    "track snapping needs to be bigger to use finer snapping"
-);
-const SIDE_CHANGE_RADIUS: f32 = 10.0;
 
 impl Plugin for TrackPlugin {
     fn build(&self, app: &mut App) {
@@ -446,7 +438,7 @@ fn build_track_snapper(
     };
 
     for (entity, node) in track.nodes.iter() {
-        if node.pos().distance(cursor_world_pos) < NEW_TRACK_SNAP_RADIUS {
+        if node.pos().distance(cursor_world_pos) < TRACK_BUILD_SNAP_RADIUS {
             match node {
                 TrackNode::DeadEnd { pos, tangent, .. } => {
                     snap = SnapNode::DeadEnd {
@@ -466,6 +458,7 @@ fn build_track_snapper(
     if matches!(snap, SnapNode::NoSnap { .. }) {
         let mut best_curve_point = None;
         let mut min_dist_to_curve = f32::MAX;
+        let search_radius = (TRACK_WIDTH * 2.0) + TRACK_BUILD_SNAP_RADIUS;
 
         for (entity, segment) in track.iter_curves() {
             let mut is_close = false;
@@ -473,7 +466,7 @@ fn build_track_snapper(
             for i in 0..=test_segments {
                 let t = i as f32 / test_segments as f32;
                 let current_point = segment.position(t);
-                if cursor_world_pos.distance(current_point) < FINER_SEGMENT_RADIUS {
+                if cursor_world_pos.distance(current_point) < search_radius {
                     is_close = true;
                     break;
                 }
@@ -484,9 +477,7 @@ fn build_track_snapper(
                 for i in 0..=fine_segments {
                     let t = i as f32 / fine_segments as f32;
                     let current_point = segment.position(t);
-
                     let dist = cursor_world_pos.distance(current_point);
-
                     if dist < min_dist_to_curve {
                         min_dist_to_curve = dist;
                         let tangent = segment.velocity(t).normalize_or_zero();
@@ -499,27 +490,27 @@ fn build_track_snapper(
         if let Some((entity, current_point, tangent)) = best_curve_point {
             if tangent != Vec2::ZERO {
                 let normal = Vec2::new(-tangent.y, tangent.x);
-                let snap_left = current_point + normal * TRACK_SPACING;
-                let snap_right = current_point - normal * TRACK_SPACING;
+                let snap_left = current_point + normal * TRACK_WIDTH * 2.0;
+                let snap_right = current_point - normal * TRACK_WIDTH * 2.0;
 
                 let dist_center = min_dist_to_curve;
                 let dist_left = cursor_world_pos.distance(snap_left);
                 let dist_right = cursor_world_pos.distance(snap_right);
 
-                if dist_center < NEW_TRACK_SNAP_RADIUS {
+                if dist_center < TRACK_BUILD_SNAP_RADIUS {
                     snap = SnapNode::NewJunction {
                         pos: current_point,
                         segment: entity,
                         normal,
                     };
-                } else if dist_left < NEW_TRACK_SNAP_RADIUS {
+                } else if dist_left < TRACK_BUILD_SNAP_RADIUS {
                     snap = SnapNode::Parallel {
                         pos: snap_left,
                         segment: entity,
                         normal,
                         side: 1,
                     };
-                } else if dist_right < NEW_TRACK_SNAP_RADIUS {
+                } else if dist_right < TRACK_BUILD_SNAP_RADIUS {
                     snap = SnapNode::Parallel {
                         pos: snap_right,
                         segment: entity,
@@ -565,7 +556,7 @@ fn build_track_spawner(
         SnapNode::DeadEnd { tangent, .. } => start_tangent = Some(tangent),
         SnapNode::NewJunction { normal, .. } | SnapNode::Parallel { normal, .. } => {
             let tangent = Vec2::new(normal.y, -normal.x);
-            if p0.distance(p3) < SIDE_CHANGE_RADIUS {
+            if p0.distance(p3) < MIN_LENGTH {
                 if (p0 - p3).dot(tangent) > 0.0 {
                     builder.drag_dir = 1;
                 } else {
@@ -608,16 +599,16 @@ fn build_track_spawner(
             p3 = p0 + normal * d;
         }
         let dist_straight = d.abs();
-        let dist_45_pos = ((d - proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
-        let dist_45_neg = ((d + proj_dist) * std::f32::consts::FRAC_1_SQRT_2).abs();
-        if dist_straight < BUILD_SNAP_DISTANCE && proj_dist > 0. {
+        let dist_45_pos = ((d - proj_dist) * FRAC_1_SQRT_2).abs();
+        let dist_45_neg = ((d + proj_dist) * FRAC_1_SQRT_2).abs();
+        if dist_straight < BUILDING_SNAP_RADIUS && proj_dist > 0. {
             segments = create_straight(p0, p0 + tangent * proj_dist, SEGMENT_LENGTH);
-        } else if dist_45_pos < BUILD_SNAP_DISTANCE && proj_dist > 0. {
-            let snap_len = (proj_dist + d) * std::f32::consts::FRAC_1_SQRT_2;
+        } else if dist_45_pos < BUILDING_SNAP_RADIUS && proj_dist > 0. {
+            let snap_len = (proj_dist + d) * FRAC_1_SQRT_2;
             let snap_dir = (tangent + normal).normalize();
             segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
-        } else if dist_45_neg < BUILD_SNAP_DISTANCE && proj_dist > 0. {
-            let snap_len = (proj_dist - d) * std::f32::consts::FRAC_1_SQRT_2;
+        } else if dist_45_neg < BUILDING_SNAP_RADIUS && proj_dist > 0. {
+            let snap_len = (proj_dist - d) * FRAC_1_SQRT_2;
             let snap_dir = (tangent - normal).normalize();
             segments = create_arc(p0, tangent, p0 + snap_dir * snap_len, SEGMENT_LENGTH);
         } else {
@@ -627,12 +618,13 @@ fn build_track_spawner(
         segments = create_straight(p0, p3, SEGMENT_LENGTH);
     }
 
-    let clearance = TRACK_SPACING * 2.5;
+    // todo: make it clip the track more properly
+    let clearance = TRACK_WIDTH * 2.5;
 
     if matches!(builder.start_snap, SnapNode::NewJunction { .. }) && !segments.is_empty() {
         let (q0, q1, q2, q3) = segments[0];
         let dist = q0.distance(q3);
-        if dist > clearance + MIN_LENGTH_TO_BUILD {
+        if dist > clearance + MIN_LENGTH {
             let t = clearance / dist;
             let (s1, s2) = bezier::split_at_t(q0, q1, q2, q3, t);
             segments[0] = s2;
@@ -644,7 +636,7 @@ fn build_track_spawner(
         let last_idx = segments.len() - 1;
         let (q0, q1, q2, q3) = segments[last_idx];
         let dist = q0.distance(q3);
-        if dist > clearance + MIN_LENGTH_TO_BUILD {
+        if dist > clearance + MIN_LENGTH {
             let t = (dist - clearance) / dist;
             let (s1, s2) = bezier::split_at_t(q0, q1, q2, q3, t);
             segments[last_idx] = s1;
@@ -667,8 +659,21 @@ fn build_track_spawner(
         );
         for (sg0, sg1, sg2, sg3) in segments.iter() {
             let curve = bezier::build_segment(*sg0, *sg1, *sg2, *sg3);
-            let (m_ballast, m_sleepers, m_rails) =
-                crate::railway::graphics::build_track_mesh_from_curve(curve);
+            let (mut m_ballast, mut m_sleepers, mut m_rails) = build_track_mesh_from_curve(curve);
+
+            if is_valid {
+                let make_it_green =
+                    |[r, g, b, a]: [f32; 4]| [r * 0.3, (g + 0.5).min(1.0), b * 0.3, a];
+                tint(&mut m_ballast, make_it_green);
+                tint(&mut m_sleepers, make_it_green);
+                tint(&mut m_rails, make_it_green);
+            } else {
+                let make_it_red =
+                    |[r, g, b, a]: [f32; 4]| [(r + 0.5).min(1.0), g * 0.3, b * 0.3, a];
+                tint(&mut m_ballast, make_it_red);
+                tint(&mut m_sleepers, make_it_red);
+                tint(&mut m_rails, make_it_red);
+            }
 
             let h_ballast = meshes.add(m_ballast);
             let h_sleepers = meshes.add(m_sleepers);
@@ -725,10 +730,10 @@ fn build_track_spawner(
                 return;
             };
 
-            if start_n.pos().distance(pos) < MIN_LENGTH_TO_BUILD {
+            if start_n.pos().distance(pos) < MIN_LENGTH {
                 start_n.add_track(segment_entities[0]);
                 track_segment.start_node
-            } else if end_n.pos().distance(pos) < MIN_LENGTH_TO_BUILD {
+            } else if end_n.pos().distance(pos) < MIN_LENGTH {
                 end_n.add_track(segment_entities[0]);
                 track_segment.end_node
             } else {
@@ -791,10 +796,10 @@ fn build_track_spawner(
                 return;
             };
 
-            if start_n.pos().distance(pos) < MIN_LENGTH_TO_BUILD {
+            if start_n.pos().distance(pos) < MIN_LENGTH {
                 start_n.add_track(*segment_entities.last().unwrap());
                 track_segment.start_node
-            } else if end_n.pos().distance(pos) < MIN_LENGTH_TO_BUILD {
+            } else if end_n.pos().distance(pos) < MIN_LENGTH {
                 end_n.add_track(*segment_entities.last().unwrap());
                 track_segment.end_node
             } else {
@@ -1110,11 +1115,11 @@ fn validate_segments(segments: &Vec<(Vec2, Vec2, Vec2, Vec2)>) -> ValidatedTrack
     }
     let first = segments.first().unwrap();
     let last = segments.last().unwrap();
-    if first.0.distance(last.3) < MIN_LENGTH_TO_BUILD && first == last {
+    if first.0.distance(last.3) < MIN_LENGTH && first == last {
         return ValidatedTrack::TooShort;
     }
     for (s0, s1, s2, s3) in segments {
-        if !is_segment_valid(*s0, *s1, *s2, *s3, MIN_RADIUS) {
+        if !is_segment_valid(*s0, *s1, *s2, *s3, MIN_CURVATURE) {
             return ValidatedTrack::SegmentSharp;
         }
     }

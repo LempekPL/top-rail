@@ -1,14 +1,9 @@
+use crate::consts::camera::{ZOOM_MAX, ZOOM_MIN, ZOOM_SPEED};
 use crate::state_manager::PlayingState;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 
 pub struct CameraPlugin;
-
-const CAMERA_SPEED: f32 = 4.0;
-const CAMERA_SPEED_UP: f32 = 10.0;
-const CAMERA_ZOOM_SPEED: f32 = 0.25;
-const CAMERA_ZOOM_MIN: f32 = CAMERA_ZOOM_SPEED;
-const CAMERA_ZOOM_MAX: f32 = CAMERA_ZOOM_SPEED * (4. + 10.);
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
@@ -39,14 +34,16 @@ fn move_camera(
     };
     for scroll in m_mouse_scroll.read() {
         if scroll.y < 0. {
-            ortho.scale += CAMERA_ZOOM_SPEED;
+            ortho.scale += ZOOM_SPEED;
         } else if scroll.y > 0. {
-            ortho.scale -= CAMERA_ZOOM_SPEED;
+            ortho.scale -= ZOOM_SPEED;
         }
-        ortho.scale = ortho.scale.min(CAMERA_ZOOM_MAX).max(CAMERA_ZOOM_MIN);
+        ortho.scale = ortho.scale.min(ZOOM_MAX).max(ZOOM_MIN);
     }
 
-    let left_move = r_state.map_or(false, |state| matches!(state.get(), PlayingState::None | PlayingState::Drive));
+    let left_move = r_state.map_or(false, |state| {
+        matches!(state.get(), PlayingState::None | PlayingState::Drive)
+    });
     if (left_move && r_mouse.pressed(MouseButton::Left)) || r_mouse.pressed(MouseButton::Middle) {
         for mouse_move in m_mouse_move.read() {
             transform.translation +=

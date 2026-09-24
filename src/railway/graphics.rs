@@ -1,3 +1,6 @@
+use crate::consts::track::{
+    RAIL_OFFSET, RAIL_WIDTH, SLEEPER_HEIGHT, SLEEPER_SPACING, SLEEPER_WIDTH, TRACK_WIDTH,
+};
 use crate::railway::track::{Track, TrackSegment};
 use crate::util::MeshBuffer;
 use bevy::prelude::*;
@@ -88,15 +91,11 @@ pub fn build_track_mesh_from_curve(cubic_curve: CubicSegment<Vec2>) -> (Mesh, Me
     let p2 = cubic_curve.position(2. / 3.);
     let p3 = cubic_curve.position(1.0);
     let approx_len = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
-    let segment_count = (approx_len / crate::PIXELS_PER_SEGMENT).ceil() as usize;
+    let segment_count = (approx_len / crate::consts::PIXELS_PER_SEGMENT).ceil() as usize;
     let segment_count = segment_count.clamp(2, 512);
 
     let mut buf_ballast = MeshBuffer::with_capacity(segment_count);
     let mut buf_rails = MeshBuffer::with_capacity(segment_count * 2);
-
-    let ballast_size = 12.0;
-    let rail_offset = 7.0;
-    let rail_size = 1.0;
 
     let mut prev_p = cubic_curve.position(0.);
     let prev_t = cubic_curve.velocity(0.).normalize_or_zero();
@@ -115,44 +114,43 @@ pub fn build_track_mesh_from_curve(cubic_curve: CubicSegment<Vec2>) -> (Mesh, Me
         total_length += dist;
 
         let u_prev = u_accum;
-        u_accum += dist / (ballast_size * 2.0);
+        u_accum += dist / (TRACK_WIDTH * 2.0);
         let u_curr = u_accum;
 
         buf_ballast.push_quad_uv(
-            prev_p + prev_n * ballast_size,
-            prev_p - prev_n * ballast_size,
-            curr_p - curr_n * ballast_size,
-            curr_p + curr_n * ballast_size,
+            prev_p + prev_n * TRACK_WIDTH,
+            prev_p - prev_n * TRACK_WIDTH,
+            curr_p - curr_n * TRACK_WIDTH,
+            curr_p + curr_n * TRACK_WIDTH,
             [u_prev, 0.0],
             [u_prev, 1.0],
             [u_curr, 1.0],
             [u_curr, 0.0],
         );
 
-        let lp_prev = prev_p + prev_n * rail_offset;
-        let lp_curr = curr_p + curr_n * rail_offset;
+        let lp_prev = prev_p + prev_n * RAIL_OFFSET;
+        let lp_curr = curr_p + curr_n * RAIL_OFFSET;
         buf_rails.push_quad(
-            lp_prev + prev_n * rail_size,
-            lp_prev - prev_n * rail_size,
-            lp_curr - curr_n * rail_size,
-            lp_curr + curr_n * rail_size,
+            lp_prev + prev_n * RAIL_WIDTH,
+            lp_prev - prev_n * RAIL_WIDTH,
+            lp_curr - curr_n * RAIL_WIDTH,
+            lp_curr + curr_n * RAIL_WIDTH,
         );
 
-        let rp_prev = prev_p - prev_n * rail_offset;
-        let rp_curr = curr_p - curr_n * rail_offset;
+        let rp_prev = prev_p - prev_n * RAIL_OFFSET;
+        let rp_curr = curr_p - curr_n * RAIL_OFFSET;
         buf_rails.push_quad(
-            rp_prev + prev_n * rail_size,
-            rp_prev - prev_n * rail_size,
-            rp_curr - curr_n * rail_size,
-            rp_curr + curr_n * rail_size,
+            rp_prev + prev_n * RAIL_WIDTH,
+            rp_prev - prev_n * RAIL_WIDTH,
+            rp_curr - curr_n * RAIL_WIDTH,
+            rp_curr + curr_n * RAIL_WIDTH,
         );
 
         prev_p = curr_p;
         prev_n = curr_n;
     }
 
-    let sleeper_spacing = 15.0;
-    let num_sleepers = (total_length / sleeper_spacing) as usize;
+    let num_sleepers = (total_length / SLEEPER_SPACING) as usize;
     let mut buf_sleepers = MeshBuffer::with_capacity(num_sleepers + 1);
 
     for i in 0..=num_sleepers {
@@ -161,14 +159,14 @@ pub fn build_track_mesh_from_curve(cubic_curve: CubicSegment<Vec2>) -> (Mesh, Me
         let d = cubic_curve.velocity(t).normalize_or_zero();
         let n = Vec2::new(-d.y, d.x);
 
-        let s_front = p + d * 1.5;
-        let s_back = p - d * 1.5;
+        let s_front = p + d * SLEEPER_HEIGHT;
+        let s_back = p - d * SLEEPER_HEIGHT;
 
         buf_sleepers.push_quad(
-            s_back + n * 10.0,
-            s_back - n * 10.0,
-            s_front - n * 10.0,
-            s_front + n * 10.0,
+            s_back + n * SLEEPER_WIDTH,
+            s_back - n * SLEEPER_WIDTH,
+            s_front - n * SLEEPER_WIDTH,
+            s_front + n * SLEEPER_WIDTH,
         );
     }
 
@@ -177,4 +175,14 @@ pub fn build_track_mesh_from_curve(cubic_curve: CubicSegment<Vec2>) -> (Mesh, Me
         buf_sleepers.to_mesh(),
         buf_rails.to_mesh(),
     )
+}
+
+pub fn tint(mesh: &mut Mesh, color_fn: impl Fn([f32; 4]) -> [f32; 4]) {
+    if let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR)
+    {
+        for color in colors.iter_mut() {
+            *color = color_fn(*color);
+        }
+    }
 }

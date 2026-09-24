@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod camera;
+pub mod consts;
 mod controls;
 mod debug;
 mod gui;
@@ -20,8 +21,6 @@ use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTime
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
-
-const PIXELS_PER_SEGMENT: f32 = 12.0;
 
 fn main() {
     App::new()

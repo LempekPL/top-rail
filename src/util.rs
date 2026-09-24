@@ -215,7 +215,9 @@ impl MeshBuffer {
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::default(),
         );
+        let colors = vec![[1.0, 1.0, 1.0, 1.0]; self.pos.len()];
         m.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.pos);
+        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
         m.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
         m.insert_indices(Indices::U32(self.ind));
         m

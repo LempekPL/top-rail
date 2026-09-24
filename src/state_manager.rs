@@ -96,10 +96,7 @@ fn playing_text_update(
     }
 }
 
-fn paused_change_state(
-    mut game_next: ResMut<NextState<GameState>>,
-    controls: Controls,
-) {
+fn paused_change_state(mut game_next: ResMut<NextState<GameState>>, controls: Controls) {
     if controls.just_pressed(|k| k.esc) {
         game_next.set(GameState::Playing);
     }
