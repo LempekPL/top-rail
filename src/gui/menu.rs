@@ -33,7 +33,7 @@ fn setup_main_box(mut commands: Commands) {
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
         }
-        // BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5))
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5))
         MainBox
         TabGroup
     });
@@ -115,7 +115,7 @@ fn main_menu() -> impl Scene {
                 on(|_: On<Activate>, mut r_next: ResMut<NextState<GameState>>, camera: Single<&mut Transform, With<MainCamera>>| {
                     r_next.set(GameState::Playing);
                     let mut camera_pos = camera.into_inner();
-                    camera_pos.translation = Vec3::new(0.,0.,0.);
+                    camera_pos.translation = Vec3::new(0.,0.,500.);
                 }),
 
                 @FeathersButton {

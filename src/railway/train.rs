@@ -20,6 +20,9 @@ impl Plugin for TrainPlugin {
 }
 
 #[derive(Component)]
+pub struct DrivingTrain;
+
+#[derive(Component)]
 pub struct SelectedTrain;
 
 #[derive(Component, Debug, Clone)]
@@ -71,24 +74,40 @@ fn spawn_train(
         return;
     };
 
-    commands.spawn((
-        Sprite {
-            color: Color::srgb(1.0, 0.4, 0.0),
-            custom_size: Some(Vec2::new(50.0, 20.0)),
-            ..default()
-        },
-        Transform::from_translation(spawn_pos.extend(5.0))
-            .with_rotation(Quat::from_rotation_z(spawn_tangent.to_angle())),
-        Train {
-            current_segment: segment_ent,
-            t: best_t,
-            speed: 0.1,
-            direction: 1,
-        },
-    ));
+    commands
+        .spawn((
+            Sprite {
+                color: Color::srgb(1.0, 0.4, 0.0),
+                custom_size: Some(Vec2::new(50.0, 20.0)),
+                ..default()
+            },
+            Transform::from_translation(spawn_pos.extend(10.0))
+                .with_rotation(Quat::from_rotation_z(spawn_tangent.to_angle())),
+            Train {
+                current_segment: segment_ent,
+                t: best_t,
+                speed: 0.1,
+                direction: 1,
+            },
+            Pickable::default(),
+        ))
+        .observe(on_train_clicked);
 }
 
-
+fn on_train_clicked(
+    trigger: On<Pointer<Click>>,
+    mut commands: Commands,
+    r_state: Res<State<PlayingState>>,
+    trains: Query<Entity, With<SelectedTrain>>,
+) {
+    if !matches!(r_state.get(), PlayingState::None) {
+        return;
+    }
+    for train in trains.iter() {
+        commands.entity(train).remove::<SelectedTrain>();
+    }
+    commands.entity(trigger.entity).insert(SelectedTrain);
+}
 
 // fn drive_controls(r_keyboard: Res<ButtonInput<KeyCode>>, mut q_trains: Query<&mut Train>) {
 //     for mut train in q_trains.iter_mut() {

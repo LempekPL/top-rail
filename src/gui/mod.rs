@@ -1,3 +1,4 @@
+use crate::gui::components::ComponentsPlugin;
 use crate::gui::game::GameUiPlugin;
 use crate::gui::menu::MenuPlugin;
 use bevy::asset::{embedded_asset, load_embedded_asset};
@@ -6,7 +7,8 @@ use bevy::feathers::dark_theme::create_dark_theme;
 use bevy::feathers::theme::UiTheme;
 use bevy::prelude::*;
 
-mod game;
+pub mod components;
+pub mod game;
 pub mod menu;
 
 pub struct GuiPlugin;
@@ -21,6 +23,7 @@ impl Plugin for GuiPlugin {
 
         app.add_plugins(MenuPlugin);
         app.add_plugins(GameUiPlugin);
+        app.add_plugins(ComponentsPlugin);
     }
 }
 

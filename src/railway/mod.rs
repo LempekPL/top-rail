@@ -2,7 +2,7 @@ use bevy::app::plugin_group;
 
 mod graphics;
 pub mod track;
-mod train;
+pub mod train;
 
 plugin_group! {
     pub struct RailwayPlugin {
