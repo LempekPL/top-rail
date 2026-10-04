@@ -23,6 +23,8 @@ use bevy::prelude::*;
 use bevy::window::PresentMode;
 use bevy_framepace::{FramepacePlugin, FramepaceSettings, Limiter};
 
+const TARGET_FPS: f64 = 165.0;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -44,7 +46,7 @@ fn main() {
                 frame_time_graph_config: FrameTimeGraphConfig {
                     enabled: false,
                     min_fps: 30.0,
-                    target_fps: 144.0,
+                    target_fps: TARGET_FPS as f32,
                 },
             },
         })
@@ -63,5 +65,5 @@ fn main() {
 }
 
 fn setup_framerate(mut settings: ResMut<FramepaceSettings>) {
-    settings.limiter = Limiter::from_framerate(165.0);
+    settings.limiter = Limiter::from_framerate(TARGET_FPS);
 }
