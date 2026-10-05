@@ -30,8 +30,8 @@ pub struct LoadGame {
 #[derive(Serialize, Deserialize)]
 struct SavableSegment {
     id: usize,
-    p1: Vec2,
-    p2: Vec2,
+    start_tangent: Vec2,
+    end_tangent: Vec2,
     start_node: usize,
     end_node: usize,
 }
@@ -125,8 +125,8 @@ fn save_game_system(mut ev_save: MessageReader<SaveGame>, track: Track) {
             let id = seg_map[&entity];
             save_file.segments.push(SavableSegment {
                 id,
-                p1: segment.p1,
-                p2: segment.p2,
+                start_tangent: segment.start_tangent,
+                end_tangent: segment.end_tangent,
                 start_node: node_map[&segment.start_node],
                 end_node: node_map[&segment.end_node],
             });
@@ -203,8 +203,8 @@ fn load_game_system(mut commands: Commands, mut ev_load: MessageReader<LoadGame>
                 let end_node = node_map[&saved_seg.end_node];
 
                 commands.entity(entity).insert(TrackSegment::bundle(
-                    saved_seg.p1,
-                    saved_seg.p2,
+                    saved_seg.start_tangent,
+                    saved_seg.end_tangent,
                     start_node,
                     end_node,
                 ));

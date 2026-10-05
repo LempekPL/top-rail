@@ -3,7 +3,7 @@ use crate::consts::building::{
     BUILDING_SNAP_RADIUS, MIN_CURVATURE, MIN_LENGTH, SEGMENT_LENGTH, TRACK_BUILD_SNAP_RADIUS,
 };
 use crate::consts::track::TRACK_WIDTH;
-use crate::debug::{TrackGizmos, draw_bezier, draw_segments};
+use crate::debug::{TrackGizmos, draw_curve, draw_segments};
 use crate::railway::graphics::{SnapCursor, TrackMaterials, build_track_mesh_from_curve, tint};
 use crate::state_manager::{DespawnWhenMainMenu, PlayingState};
 use crate::util::*;
@@ -117,24 +117,37 @@ impl TrackBuilder {
 
 #[derive(Component, Debug, Clone)]
 pub struct TrackSegment {
-    pub p1: Vec2,
-    pub p2: Vec2,
+    pub start_tangent: Vec2,
+    pub end_tangent: Vec2,
     pub start_node: Entity,
     pub end_node: Entity,
 }
 
 impl TrackSegment {
-    pub fn new(p1: Vec2, p2: Vec2, start_node: Entity, end_node: Entity) -> Self {
+    pub fn new(
+        start_tangent: Vec2,
+        end_tangent: Vec2,
+        start_node: Entity,
+        end_node: Entity,
+    ) -> Self {
         Self {
-            p1,
-            p2,
+            start_tangent,
+            end_tangent,
             start_node,
             end_node,
         }
     }
 
-    pub fn bundle(p1: Vec2, p2: Vec2, start_node: Entity, end_node: Entity) -> impl Bundle {
-        (Self::new(p1, p2, start_node, end_node), DespawnWhenMainMenu)
+    pub fn bundle(
+        start_tangent: Vec2,
+        end_tangent: Vec2,
+        start_node: Entity,
+        end_node: Entity,
+    ) -> impl Bundle {
+        (
+            Self::new(start_tangent, end_tangent, start_node, end_node),
+            DespawnWhenMainMenu,
+        )
     }
 }
 
@@ -353,7 +366,12 @@ impl<'w, 's> Track<'w, 's> {
             let (_, end) = self.nodes.get(segment.end_node).ok()?;
             Some((
                 seg_ent,
-                bezier::build_segment(start.pos(), segment.p1, segment.p2, end.pos()),
+                curve::build_segment(
+                    start.pos(),
+                    segment.start_tangent,
+                    end.pos(),
+                    -segment.end_tangent,
+                ),
             ))
         })
     }
@@ -378,11 +396,11 @@ impl<'w, 's> Track<'w, 's> {
         self.segments.get(seg_ent).map_or(None, |(_, segment)| {
             let (_, start) = self.nodes.get(segment.start_node).ok()?;
             let (_, end) = self.nodes.get(segment.end_node).ok()?;
-            Some(bezier::build_segment(
+            Some(curve::build_segment(
                 start.pos(),
-                segment.p1,
-                segment.p2,
+                segment.start_tangent,
                 end.pos(),
+                -segment.end_tangent,
             ))
         })
     }
@@ -589,11 +607,11 @@ fn build_track_spawner(
             tangent = -tangent;
         }
         let t0 = start_tangent.unwrap_or(chord_dir);
-        segments = create_segmented_bezier(p0, t0, p3, tangent, SEGMENT_LENGTH);
+        segments = create_segmented_curve(p0, t0, p3, tangent, SEGMENT_LENGTH);
     } else if let SnapNode::DeadEnd { tangent, .. } = builder.current_snap {
         let chord_dir = (p3 - p0).normalize_or_zero();
         let t0 = start_tangent.unwrap_or(chord_dir);
-        segments = create_segmented_bezier(p0, t0, p3, -tangent, SEGMENT_LENGTH);
+        segments = create_segmented_curve(p0, t0, p3, -tangent, SEGMENT_LENGTH);
     } else if let Some(tangent) = start_tangent {
         let normal = Vec2::new(-tangent.y, tangent.x);
         let chord = p3 - p0;
@@ -627,11 +645,12 @@ fn build_track_spawner(
     let clearance = TRACK_WIDTH * 2.5;
 
     if matches!(builder.start_snap, SnapNode::NewJunction { .. }) && !segments.is_empty() {
-        let (q0, q1, q2, q3) = segments[0];
-        let dist = q0.distance(q3);
+        let dist = segments[0]
+            .position(0.0)
+            .distance(segments[0].position(1.0));
         if dist > clearance + MIN_LENGTH {
             let t = clearance / dist;
-            let (s1, s2) = bezier::split_at_t(q0, q1, q2, q3, t);
+            let (s1, s2) = curve::split_at_t(&segments[0], t);
             segments[0] = s2;
             segments.insert(0, s1);
         }
@@ -639,11 +658,12 @@ fn build_track_spawner(
 
     if matches!(builder.current_snap, SnapNode::NewJunction { .. }) && !segments.is_empty() {
         let last_idx = segments.len() - 1;
-        let (q0, q1, q2, q3) = segments[last_idx];
-        let dist = q0.distance(q3);
+        let dist = segments[last_idx]
+            .position(0.0)
+            .distance(segments[last_idx].position(1.0));
         if dist > clearance + MIN_LENGTH {
             let t = (dist - clearance) / dist;
-            let (s1, s2) = bezier::split_at_t(q0, q1, q2, q3, t);
+            let (s1, s2) = curve::split_at_t(&segments[last_idx], t);
             segments[last_idx] = s1;
             segments.push(s2);
         }
@@ -662,9 +682,9 @@ fn build_track_spawner(
                 Color::srgb(1., 0., 0.)
             },
         );
-        for (sg0, sg1, sg2, sg3) in segments.iter() {
-            let curve = bezier::build_segment(*sg0, *sg1, *sg2, *sg3);
-            let (mut m_ballast, mut m_sleepers, mut m_rails) = build_track_mesh_from_curve(curve);
+        for curve in segments.iter() {
+            let (mut m_ballast, mut m_sleepers, mut m_rails) =
+                build_track_mesh_from_curve(curve.clone());
 
             if is_valid {
                 let make_it_green =
@@ -741,13 +761,13 @@ fn build_track_spawner(
                 end_n.add_track(segment_entities[0]);
                 track_segment.end_node
             } else {
-                let (s1, s2) = bezier::split_at_pos(
+                let segment_curve = curve::build_segment(
                     start_n.pos(),
-                    track_segment.p1,
-                    track_segment.p2,
+                    track_segment.start_tangent,
                     end_n.pos(),
-                    pos,
+                    -track_segment.end_tangent,
                 );
+                let (s1, s2) = curve::split_at_pos(&segment_curve, pos);
                 commands.entity(ent_seg).despawn();
 
                 let new_ts1 = commands.spawn_empty().id();
@@ -764,14 +784,14 @@ fn build_track_spawner(
                     .id();
 
                 commands.entity(new_ts1).insert(TrackSegment::bundle(
-                    s1.1,
-                    s1.2,
+                    s1.velocity(0.0),
+                    -s1.velocity(1.0),
                     track_segment.start_node,
                     new_junction,
                 ));
                 commands.entity(new_ts2).insert(TrackSegment::bundle(
-                    s2.1,
-                    s2.2,
+                    s2.velocity(0.0),
+                    -s2.velocity(1.0),
                     new_junction,
                     track_segment.end_node,
                 ));
@@ -783,8 +803,9 @@ fn build_track_spawner(
             }
             node
         } else {
-            let (q0, q1, _, _) = segments[0];
-            let dir = (q0 - q1).normalize_or_zero();
+            let seg = &segments[0];
+            let q0 = seg.position(0.0);
+            let dir = -seg.velocity(0.0).normalize_or_zero();
             commands
                 .spawn(TrackNode::bundle_end(q0, dir, segment_entities[0]))
                 .id()
@@ -807,13 +828,13 @@ fn build_track_spawner(
                 end_n.add_track(*segment_entities.last().unwrap());
                 track_segment.end_node
             } else {
-                let (s1, s2) = bezier::split_at_pos(
+                let segment_curve = curve::build_segment(
                     start_n.pos(),
-                    track_segment.p1,
-                    track_segment.p2,
+                    track_segment.start_tangent,
                     end_n.pos(),
-                    pos,
+                    -track_segment.end_tangent,
                 );
+                let (s1, s2) = curve::split_at_pos(&segment_curve, pos);
                 commands.entity(ent_seg).despawn();
 
                 let new_ts1 = commands.spawn_empty().id();
@@ -830,14 +851,14 @@ fn build_track_spawner(
                     .id();
 
                 commands.entity(new_ts1).insert(TrackSegment::bundle(
-                    s1.1,
-                    s1.2,
+                    s1.velocity(0.0),
+                    -s1.velocity(1.0),
                     track_segment.start_node,
                     new_junction,
                 ));
                 commands.entity(new_ts2).insert(TrackSegment::bundle(
-                    s2.1,
-                    s2.2,
+                    s2.velocity(0.0),
+                    -s2.velocity(1.0),
                     new_junction,
                     track_segment.end_node,
                 ));
@@ -849,11 +870,12 @@ fn build_track_spawner(
             }
             node
         } else {
-            let (_, _, q2, q3) = segments.last().unwrap();
-            let dir = (q3 - q2).normalize_or_zero();
+            let seg = segments.last().unwrap();
+            let q3 = seg.position(1.0);
+            let dir = seg.velocity(1.0).normalize_or_zero();
             commands
                 .spawn(TrackNode::bundle_end(
-                    *q3,
+                    q3,
                     dir,
                     *segment_entities.last().unwrap(),
                 ))
@@ -866,7 +888,7 @@ fn build_track_spawner(
         }
 
         for i in 0..segments.len() {
-            let (_, q1, q2, q3) = segments[i];
+            let seg = &segments[i];
             let is_last = i == segments.len() - 1;
 
             let seg_ent = segment_entities[i];
@@ -881,16 +903,19 @@ fn build_track_spawner(
                 intermediate_nodes[i]
             };
 
-            commands
-                .entity(seg_ent)
-                .insert(TrackSegment::bundle(q1, q2, node_prev, node_next));
+            commands.entity(seg_ent).insert(TrackSegment::bundle(
+                seg.velocity(0.0),
+                -seg.velocity(1.0),
+                node_prev,
+                node_next,
+            ));
 
             if !is_last {
                 let next_seg_ent = segment_entities[i + 1];
-                let dir = (q3 - q2).normalize_or_zero();
+                let dir = seg.velocity(1.0).normalize_or_zero();
                 let normal = Vec2::new(-dir.y, dir.x);
                 commands.entity(node_next).insert(TrackNode::bundle_cont(
-                    q3,
+                    seg.position(1.0),
                     normal,
                     [seg_ent, next_seg_ent],
                 ));
@@ -924,7 +949,7 @@ fn bulldoze_track(
     let mut closest_dist = 15.0;
     const SAMPLES: usize = 10;
     for (seg_ent, segment, start_node, end_node) in track.as_readonly().iter_track() {
-        let curve = bezier::build_segment(start_node.pos(), segment.p1, segment.p2, end_node.pos());
+        let curve = curve::build_segment(start_node.pos(), segment.start_tangent, end_node.pos(), -segment.end_tangent);
         for i in 0..=SAMPLES {
             let t = i as f32 / SAMPLES as f32;
             let point = curve.position(t);
@@ -946,12 +971,10 @@ fn bulldoze_track(
     };
 
     // todo: replace with real red track in the future
-    draw_bezier(
+    let deleted_curve = curve::build_segment(start_node.pos(), deleted_seg.start_tangent, end_node.pos(), -deleted_seg.end_tangent);
+    draw_curve(
         &mut gizmos,
-        start_node.pos(),
-        deleted_seg.p1,
-        deleted_seg.p2,
-        end_node.pos(),
+        &deleted_curve,
         Color::srgb(1., 0., 0.),
     );
 
@@ -985,9 +1008,9 @@ fn bulldoze_track(
         {
             if let Ok((_, surviving_seg)) = track.segments.get(surviving_ent) {
                 let tangent = if surviving_seg.start_node == node_ent {
-                    (pos - surviving_seg.p1).normalize_or_zero()
+                    -surviving_seg.start_tangent.normalize_or_zero()
                 } else {
-                    (pos - surviving_seg.p2).normalize_or_zero()
+                    -surviving_seg.end_tangent.normalize_or_zero()
                 };
                 *node = TrackNode::DeadEnd {
                     pos,
@@ -1106,25 +1129,25 @@ impl ValidatedTrack {
         matches!(self, ValidatedTrack::Valid)
     }
 }
-fn validate_segments(segments: &Vec<(Vec2, Vec2, Vec2, Vec2)>) -> ValidatedTrack {
+
+fn validate_segments(segments: &[CubicSegment<Vec2>]) -> ValidatedTrack {
     if segments.is_empty() {
         return ValidatedTrack::Empty;
     }
     let first = segments.first().unwrap();
     let last = segments.last().unwrap();
-    if first.0.distance(last.3) < MIN_LENGTH && first == last {
+    if first.position(0.0).distance(last.position(1.0)) < MIN_LENGTH && segments.len() == 1 {
         return ValidatedTrack::TooShort;
     }
-    for (s0, s1, s2, s3) in segments {
-        if !is_segment_valid(*s0, *s1, *s2, *s3, MIN_CURVATURE) {
+    for seg in segments {
+        if !is_segment_valid(seg, MIN_CURVATURE) {
             return ValidatedTrack::SegmentSharp;
         }
     }
     ValidatedTrack::Valid
 }
 
-pub fn is_segment_valid(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, min_radius: f32) -> bool {
-    let segment = bezier::build_segment(p0, p1, p2, p3);
+pub fn is_segment_valid(segment: &CubicSegment<Vec2>, min_radius: f32) -> bool {
     for i in 0..=10 {
         let t = i as f32 / 10.0;
         let d1 = segment.velocity(t);

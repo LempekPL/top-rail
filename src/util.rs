@@ -1,14 +1,27 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::math::Vec2;
 use bevy::mesh::{Indices, Mesh, PrimitiveTopology};
+use bevy::prelude::CubicSegment;
 
-pub mod bezier {
+pub mod curve {
     use bevy::math::Vec2;
     use bevy::math::cubic_splines::CubicSegment;
 
     #[inline]
-    pub fn build_segment(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> CubicSegment<Vec2> {
-        CubicSegment::new_bezier([p0, p1, p2, p3])
+    pub fn build_segment(
+        start_pos: Vec2,
+        start_tangent: Vec2,
+        end_pos: Vec2,
+        end_tangent: Vec2,
+    ) -> CubicSegment<Vec2> {
+        CubicSegment {
+            coeff: [
+                start_pos,
+                start_tangent,
+                (end_pos - start_pos) * 3. - start_tangent * 2. - end_tangent,
+                (start_pos - end_pos) * 2. + start_tangent + end_tangent,
+            ],
+        }
     }
 
     pub fn find_t_from_pos(segment: &CubicSegment<Vec2>, pos: Vec2) -> f32 {
@@ -30,43 +43,43 @@ pub mod bezier {
     }
 
     pub fn split_at_t(
-        p0: Vec2,
-        p1: Vec2,
-        p2: Vec2,
-        p3: Vec2,
+        segment: &CubicSegment<Vec2>,
         t: f32,
-    ) -> ((Vec2, Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2, Vec2)) {
-        let p01 = p0.lerp(p1, t);
-        let p12 = p1.lerp(p2, t);
-        let p23 = p2.lerp(p3, t);
+    ) -> (CubicSegment<Vec2>, CubicSegment<Vec2>) {
+        let start_pos = segment.position(0.0);
+        let start_tangent = segment.velocity(0.0);
+        let end_pos = segment.position(1.0);
+        let end_tangent = segment.velocity(1.0);
 
-        let p012 = p01.lerp(p12, t);
-        let p123 = p12.lerp(p23, t);
+        let mid_pos = segment.position(t);
+        let mid_tangent = segment.velocity(t);
 
-        let p0123 = p012.lerp(p123, t);
+        let left = build_segment(start_pos, start_tangent * t, mid_pos, mid_tangent * t);
+        let right = build_segment(
+            mid_pos,
+            mid_tangent * (1.0 - t),
+            end_pos,
+            end_tangent * (1.0 - t),
+        );
 
-        ((p0, p01, p012, p0123), (p0123, p123, p23, p3))
+        (left, right)
     }
 
     pub fn split_at_pos(
-        p0: Vec2,
-        p1: Vec2,
-        p2: Vec2,
-        p3: Vec2,
+        segment: &CubicSegment<Vec2>,
         pos: Vec2,
-    ) -> ((Vec2, Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2, Vec2)) {
-        let segment = build_segment(p0, p1, p2, p3);
-        let t = find_t_from_pos(&segment, pos);
-        split_at_t(p0, p1, p2, p3, t)
+    ) -> (CubicSegment<Vec2>, CubicSegment<Vec2>) {
+        let t = find_t_from_pos(segment, pos);
+        split_at_t(segment, t)
     }
 }
 
 pub fn create_straight(
-    p_start: Vec2,
-    p_end: Vec2,
+    start_pos: Vec2,
+    end_pos: Vec2,
     segment_length: f32,
-) -> Vec<(Vec2, Vec2, Vec2, Vec2)> {
-    let line = p_end - p_start;
+) -> Vec<CubicSegment<Vec2>> {
+    let line = end_pos - start_pos;
     let dist = line.length();
     if dist < 0.001 {
         // ignore when short
@@ -76,42 +89,42 @@ pub fn create_straight(
     let num_splits = (dist / segment_length).ceil().max(1.0) as usize;
     let step_len = dist / num_splits as f32;
     let mut segments = Vec::with_capacity(num_splits);
-    let mut last_q3 = p_start;
+    let tangent = dir * step_len;
+    let mut last_pos = start_pos;
     for i in 0..num_splits {
-        let q0 = last_q3;
-        let q3 = if i == num_splits - 1 {
-            p_end
+        let next_pos = if i == num_splits - 1 {
+            end_pos
         } else {
-            p_start + dir * ((i + 1) as f32 * step_len)
+            start_pos + dir * ((i + 1) as f32 * step_len)
         };
-        segments.push((q0, q0.lerp(q3, 1. / 3.), q0.lerp(q3, 2. / 3.), q3));
-        last_q3 = q3;
+        segments.push(curve::build_segment(last_pos, tangent, next_pos, tangent));
+        last_pos = next_pos;
     }
 
     segments
 }
 
 pub fn create_arc(
-    p_start: Vec2,
-    start_tangent: Vec2,
-    p_end: Vec2,
+    start_pos: Vec2,
+    start_tangent_dir: Vec2,
+    end_pos: Vec2,
     segment_length: f32,
-) -> Vec<(Vec2, Vec2, Vec2, Vec2)> {
-    let normal = Vec2::new(-start_tangent.y, start_tangent.x);
-    let chord = p_end - p_start;
+) -> Vec<CubicSegment<Vec2>> {
+    let normal = Vec2::new(-start_tangent_dir.y, start_tangent_dir.x);
+    let chord = end_pos - start_pos;
     let d = chord.dot(normal);
 
     // if chord and tangent are very close just make it straight
     if d.abs() < 0.00001 {
-        return create_straight(p_start, p_end, segment_length);
+        return create_straight(start_pos, end_pos, segment_length);
     }
 
     let turn_dir = d.signum();
     let radius = chord.length_squared() / (2.0 * d.abs());
-    let center = p_start + normal * radius * turn_dir;
+    let center = start_pos + normal * radius * turn_dir;
 
-    let start_angle = (p_start - center).to_angle();
-    let end_angle = (p_end - center).to_angle();
+    let start_angle = (start_pos - center).to_angle();
+    let end_angle = (end_pos - center).to_angle();
     let mut sweep_angle = end_angle - start_angle;
     if turn_dir > 0.0 && sweep_angle < 0.0 {
         sweep_angle += std::f32::consts::TAU;
@@ -123,11 +136,12 @@ pub fn create_arc(
     let num_splits = (arc_length / segment_length).ceil().max(1.0) as usize;
 
     let step = sweep_angle / num_splits as f32;
-    let k = (4.0 / 3.0) * (step.abs() / 4.0).tan();
+    let tangent_mag = radius * step.abs();
 
     let mut segments = Vec::with_capacity(num_splits);
     let mut current_angle = start_angle;
-    let mut last_q3 = p_start;
+    let mut last_pos = start_pos;
+
     for i in 0..num_splits {
         let is_last = i == num_splits - 1;
         let next_angle = if is_last {
@@ -136,61 +150,63 @@ pub fn create_arc(
             start_angle + (i + 1) as f32 * step
         };
 
-        let t0 = Vec2::new(-current_angle.sin(), current_angle.cos()) * turn_dir;
-        let t1 = Vec2::new(-next_angle.sin(), next_angle.cos()) * turn_dir;
+        let t0 = Vec2::new(-current_angle.sin(), current_angle.cos()) * turn_dir * tangent_mag;
+        let t1 = Vec2::new(-next_angle.sin(), next_angle.cos()) * turn_dir * tangent_mag;
 
-        let q0 = last_q3;
-        let q3 = if is_last {
-            p_end
+        let next_pos = if is_last {
+            end_pos
         } else {
             center + Vec2::from_angle(next_angle) * radius
         };
 
-        let q1 = q0 + t0 * (k * radius);
-        let q2 = q3 - t1 * (k * radius);
-
-        segments.push((q0, q1, q2, q3));
+        segments.push(curve::build_segment(last_pos, t0, next_pos, t1));
         current_angle = next_angle;
-        last_q3 = q3;
+        last_pos = next_pos;
     }
     segments
 }
 
-pub fn create_segmented_bezier(
-    p0: Vec2,
-    t0: Vec2,
-    p3: Vec2,
-    t3: Vec2,
+pub fn create_segmented_curve(
+    start_point: Vec2,
+    start_tangent_dir: Vec2,
+    end_point: Vec2,
+    end_tangent_dir: Vec2,
     segment_length: f32,
-) -> Vec<(Vec2, Vec2, Vec2, Vec2)> {
-    let dist = p0.distance(p3);
-    let d = dist * 0.45;
+) -> Vec<CubicSegment<Vec2>> {
+    let dist = start_point.distance(end_point);
+    let d = dist * 1.35;
 
-    let p1 = p0 + t0 * d;
-    let p2 = p3 - t3 * d;
+    let start_tangent = start_tangent_dir.normalize_or_zero() * d;
+    let end_tangent = end_tangent_dir.normalize_or_zero() * d;
+    let segment = curve::build_segment(start_point, start_tangent, end_point, end_tangent);
 
     let num_splits = (dist / segment_length).ceil().max(1.0) as usize;
     let step = 1.0 / num_splits as f32;
 
-    let mut segments = Vec::new();
-    let mut last_q3 = p0;
-    let segment = bezier::build_segment(p0, p1, p2, p3);
+    let mut segments = Vec::with_capacity(num_splits);
+    let mut last_pos = start_point;
+    let mut last_tangent = segment.velocity(0.0) * step;
     for i in 0..num_splits {
         let is_last = i == num_splits - 1;
-
-        let ta = i as f32 * step;
         let tb = if is_last { 1.0 } else { (i + 1) as f32 * step };
+        let next_pos = if is_last {
+            end_point
+        } else {
+            segment.position(tb)
+        };
+        let next_tangent = segment.velocity(tb) * step;
 
-        let q0 = last_q3;
-        let q3 = if is_last { p3 } else { segment.position(tb) };
+        segments.push(curve::build_segment(
+            last_pos,
+            last_tangent,
+            next_pos,
+            next_tangent,
+        ));
 
-        let q1 = q0 + segment.velocity(ta) * (step / 3.0);
-        let q2 = q3 - segment.velocity(tb) * (step / 3.0);
-
-        segments.push((q0, q1, q2, q3));
-
-        last_q3 = q3;
+        last_pos = next_pos;
+        last_tangent = next_tangent;
     }
+
     segments
 }
 

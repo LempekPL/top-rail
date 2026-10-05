@@ -111,17 +111,15 @@ fn debug_draw_track(
     let intersects = |min1: Vec2, max1: Vec2, min2: Vec2, max2: Vec2| -> bool {
         min1.x <= max2.x && max1.x >= min2.x && min1.y <= max2.y && max1.y >= min2.y
     };
-    for (_, segment, start_node, end_node) in track.iter_track() {
-        let p0 = start_node.pos();
-        let p1 = segment.p1;
-        let p2 = segment.p2;
-        let p3 = end_node.pos();
+    for (_, curve) in track.iter_curves() {
+        let p0 = curve.position(0.0);
+        let p1 = curve.position(1.0);
 
-        let seg_min = p0.min(p1).min(p2).min(p3);
-        let seg_max = p0.max(p1).max(p2).max(p3);
+        let seg_min = p0.min(p1) - Vec2::splat(150.0);
+        let seg_max = p0.max(p1) + Vec2::splat(150.0);
 
         if intersects(seg_min, seg_max, view_min, view_max) {
-            draw_bezier(&mut gizmos, p0, p1, p2, p3, Color::srgb(0.9, 0.9, 0.9));
+            draw_curve(&mut gizmos, &curve, Color::srgb(0.9, 0.9, 0.9));
         }
     }
 
@@ -132,47 +130,42 @@ fn debug_draw_track(
             && node.pos().y <= view_max.y
         {
             let (dir, color) = match node {
-                TrackNode::DeadEnd { tangent, .. } => (tangent, Color::srgb(1.0, 0.0, 0.0)),
-                TrackNode::Continuation { normal, .. } => (normal, Color::srgb(0.0, 1.0, 0.0)),
-                TrackNode::Junction { normal, .. } => (normal, Color::srgb(0.0, 0.0, 1.0)),
-                TrackNode::Crossing { normal, .. } => (normal, Color::srgb(1.0, 1.0, 1.0)),
+                TrackNode::DeadEnd { tangent, .. } => (*tangent, Color::srgb(1.0, 0.0, 0.0)),
+                TrackNode::Continuation { normal, .. } => (*normal, Color::srgb(0.0, 1.0, 0.0)),
+                TrackNode::Junction { normal, .. } => (*normal, Color::srgb(0.0, 0.0, 1.0)),
+                TrackNode::Crossing { normal, .. } => (*normal, Color::srgb(1.0, 1.0, 1.0)),
             };
             gizmos.circle_2d(node.pos(), 5., color);
             gizmos.arrow_2d(
                 node.pos(),
-                node.pos() + dir * 10.0,
+                node.pos() + dir.normalize_or_zero() * 10.0,
                 Color::srgb(1.0, 1.0, 0.),
             );
         }
     }
 }
 
-pub fn draw_segments(
-    mut gizmos: &mut TrackGizmos,
-    segments: &Vec<(Vec2, Vec2, Vec2, Vec2)>,
-    color: Color,
-) {
-    for (sg0, sg1, sg2, sg3) in segments.iter() {
-        draw_bezier(&mut gizmos, *sg0, *sg1, *sg2, *sg3, color);
-        gizmos.circle_2d(*sg0, 3.0, color);
+pub fn draw_segments(gizmos: &mut TrackGizmos, segments: &[CubicSegment<Vec2>], color: Color) {
+    for segment in segments.iter() {
+        draw_curve(gizmos, segment, color);
+        gizmos.circle_2d(segment.position(0.), 3.0, color);
     }
 }
 
-pub fn draw_bezier<T: GizmoConfigGroup>(
+pub fn draw_curve<T: GizmoConfigGroup>(
     gizmos: &mut Gizmos<T>,
-    p0: Vec2,
-    p1: Vec2,
-    p2: Vec2,
-    p3: Vec2,
+    curve: &CubicSegment<Vec2>,
     color: Color,
 ) {
-    let approx_length = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
+    let p0 = curve.position(0.0);
+    let p1 = curve.position(1.0);
+    let approx_length = p0.distance(p1) * 1.2;
     let calculated_segments = (approx_length / crate::consts::PIXELS_PER_SEGMENT).ceil() as usize;
     let segments = calculated_segments.clamp(10, 256);
 
-    gizmos.curve_2d(
-        CubicBezier::new([[p0, p1, p2, p3]]).to_curve().unwrap(),
-        (0..=segments).map(|n| n as f32 / segments as f32),
-        color,
-    );
+    let points = (0..=segments).map(|n| {
+        let t = n as f32 / segments as f32;
+        curve.position(t)
+    });
+    gizmos.linestrip_2d(points, color);
 }
